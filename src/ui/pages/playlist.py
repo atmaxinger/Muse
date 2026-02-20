@@ -136,23 +136,59 @@ class PlaylistPage(Adw.Bin):
         play_btn.connect("clicked", self.on_play_clicked)
         actions_box.append(play_btn)
         
-        shuffle_btn = Gtk.Button(icon_name="media-playlist-shuffle-symbolic")
+        shuffle_btn = Gtk.Button()
+        shuffle_btn.set_icon_name("media-playlist-shuffle-symbolic")
         shuffle_btn.add_css_class("circular")
+        shuffle_btn.set_valign(Gtk.Align.CENTER)
+        shuffle_btn.set_halign(Gtk.Align.CENTER)
+        shuffle_btn.set_size_request(48, 48)
         shuffle_btn.connect("clicked", self.on_shuffle_clicked)
         actions_box.append(shuffle_btn)
+
+        # Sort DropDown
+        self.sort_dropdown = Gtk.DropDown.new_from_strings([
+            "Default",
+            "Title (A-Z)",
+            "Artist (A-Z)",
+            "Album (A-Z)"
+        ])
+        self.sort_dropdown.set_valign(Gtk.Align.CENTER)
+        self.sort_dropdown.add_css_class("pill")
+        self.sort_dropdown.add_css_class("sort-dropdown")
+        self.sort_dropdown.connect("notify::selected", self.on_sort_changed)
         
         self.details_col.append(actions_box)
-        # self.header_info_box.append(self.details_col) # Already appended earlier
         
         content_box.append(header_clamp)
-        
-        # 2. Songs List
+
+        # Track section: sort row + list in a tighter sub-box
+        track_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        # Sort row — above the track list (hidden until tracks load)
+        sort_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        sort_row.append(self.sort_dropdown)
+        sort_row.set_visible(False)
+        self.sort_row = sort_row
+        track_section.append(sort_row)
+
+        # Songs List (hidden until tracks load to avoid empty shadow)
         self.songs_list = Gtk.ListBox()
         self.songs_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.songs_list.add_css_class("boxed-list")
         self.songs_list.connect("row-activated", self.on_song_activated)
-        
-        content_box.append(self.songs_list)
+        self.songs_list.set_visible(False)
+        track_section.append(self.songs_list)
+
+        # Empty-state label
+        self.empty_label = Gtk.Label(label="This playlist has no songs")
+        self.empty_label.add_css_class("dim-label")
+        self.empty_label.set_margin_top(24)
+        self.empty_label.set_margin_bottom(24)
+        self.empty_label.set_halign(Gtk.Align.CENTER)
+        self.empty_label.set_visible(False)
+        track_section.append(self.empty_label)
+
+        content_box.append(track_section)
         
         # Content loading spinner (for when initial data is shown but tracks are loading)
         self.content_spinner = Adw.Spinner()
@@ -588,6 +624,15 @@ class PlaylistPage(Adw.Bin):
         self.meta_label.set_markup(meta1) # Use markup
         self.stats_label.set_label(meta2)
         
+        # Hide sort for albums (fixed track order)
+        is_album = self.playlist_id and (self.playlist_id.startswith("MPRE") or self.playlist_id.startswith("OLAK"))
+        
+        has_tracks = bool(tracks)
+        # Show/hide list and sort row based on whether there are tracks
+        self.songs_list.set_visible(has_tracks)
+        self.empty_label.set_visible(not has_tracks)
+        self.sort_row.set_visible(has_tracks and not is_album)
+        
         if thumbnails and not append: # Don't change cover on lazy load
             url = thumbnails[-1]['url']
             if self.cover_img.url != url:
@@ -613,9 +658,15 @@ class PlaylistPage(Adw.Bin):
             print(f"Appending {len(new_tracks)} new tracks (Total: {len(tracks)})")
             
             self.current_tracks.extend(new_tracks)
+            if hasattr(self, 'original_tracks'):
+                self.original_tracks.extend(new_tracks)
             
-            for t in new_tracks:
-                 self._add_track_row(t)
+            # If we are currently sorted, we should probably re-sort
+            if self.sort_dropdown.get_selected() != 0:
+                self.reorder_playlist(self.sort_dropdown.get_selected())
+            else:
+                for t in new_tracks:
+                     self._add_track_row(t)
                  
             # Hide spinner AFTER adding rows to avoid freeze perception
             self.load_more_spinner.set_visible(False)
@@ -637,7 +688,9 @@ class PlaylistPage(Adw.Bin):
                 self.is_fully_loaded = True
                 
             # Full Reset
-            self.current_tracks = tracks
+            self.current_tracks = list(tracks)
+            self.original_tracks = list(tracks)
+            self.sort_dropdown.set_selected(0) # Reset to Default
             
             for t in tracks:
                 self._add_track_row(t)
@@ -672,7 +725,7 @@ class PlaylistPage(Adw.Bin):
                 'title': title,
                 'artist': artist,
                 'thumb': thumb_url,
-                'playlistId': t.get('playlistId')
+                'setVideoId': t.get('setVideoId') or t.get('playlistId')
             }
             
             if not t.get('videoId'):
@@ -718,6 +771,40 @@ class PlaylistPage(Adw.Bin):
                         break
                 
                 self.player.set_queue(self.current_tracks, start_index)
+
+    def on_sort_changed(self, dropdown, pspec):
+        selected = dropdown.get_selected()
+        self.reorder_playlist(selected)
+
+    def reorder_playlist(self, sort_type):
+        if not self.current_tracks:
+            return
+            
+        # 0: Default, 1: Title, 2: Artist, 3: Album
+        if sort_type == 0:
+            # Re-fetch default order (which is stored in a clean state if we had one)
+            # For now, if we don't store it, we might need to re-fetch or just accept it's "sorted"
+            # To properly support "Default", we should have stored original_tracks
+            if hasattr(self, 'original_tracks'):
+                self.current_tracks = list(self.original_tracks)
+            else:
+                return # Can't restore without backup
+        elif sort_type == 1:
+            self.current_tracks.sort(key=lambda x: x.get('title', '').lower())
+        elif sort_type == 2:
+            self.current_tracks.sort(key=lambda x: (x.get('artists', [{}])[0].get('name', '').lower() if x.get('artists') else '', x.get('title', '').lower()))
+        elif sort_type == 3:
+            self.current_tracks.sort(key=lambda x: (x.get('album', {}).get('name', '').lower() if isinstance(x.get('album'), dict) else str(x.get('album') or '').lower(), x.get('title', '').lower()))
+
+        # Clear and Re-add
+        child = self.songs_list.get_first_child()
+        while child:
+            next_child = child.get_next_sibling()
+            self.songs_list.remove(child)
+            child = next_child
+            
+        for t in self.current_tracks:
+            self._add_track_row(t)
 
     def on_meta_link_activated(self, label, uri):
         if uri.startswith("artist:"):
@@ -832,6 +919,15 @@ class PlaylistPage(Adw.Bin):
                     if hasattr(root, 'open_artist'):
                         root.open_artist(aid, name)
 
+        def set_as_cover_action(action, param):
+            vid = data.get('id')
+            set_id = data.get('playlistId') # This is the setVideoId for playlists
+            if self.playlist_id and set_id:
+                # To change cover, we move the item to the top
+                thread = threading.Thread(target=self._move_to_top, args=(set_id, vid))
+                thread.daemon = True
+                thread.start()
+
         action_copy = Gio.SimpleAction.new("copy_link", None)
         action_copy.connect("activate", copy_link_action)
         group.add_action(action_copy)
@@ -839,6 +935,10 @@ class PlaylistPage(Adw.Bin):
         action_goto = Gio.SimpleAction.new("goto_artist", None)
         action_goto.connect("activate", goto_artist_action)
         group.add_action(action_goto)
+
+        action_set_cover = Gio.SimpleAction.new("set_cover", None)
+        action_set_cover.connect("activate", set_as_cover_action)
+        group.add_action(action_set_cover)
         
         menu_model = Gio.Menu()
         if data.get('id'):
@@ -846,6 +946,10 @@ class PlaylistPage(Adw.Bin):
             
         if full_track_data and 'artists' in full_track_data and full_track_data['artists'][0].get('id'):
             menu_model.append("Go to Artist", "row.goto_artist")
+        
+        # Only allow setting cover if it's a playlist (not album) and we have auth
+        if self.client.is_authenticated() and self.playlist_id and not (self.playlist_id.startswith("MPRE") or self.playlist_id.startswith("OLAK")):
+             menu_model.append("Set as Playlist Cover", "row.set_cover")
             
         if menu_model.get_n_items() > 0:
             popover = Gtk.PopoverMenu.new_from_model(menu_model)
@@ -860,6 +964,26 @@ class PlaylistPage(Adw.Bin):
             popover.set_pointing_to(rect)
             
             popover.popup()
+
+    def _move_to_top(self, set_video_id, video_id):
+        print(f"Moving track {video_id} (setVideoId: {set_video_id}) to top of playlist {self.playlist_id}")
+        try:
+            
+            if not self.original_tracks:
+                 return
+                 
+            first_item = self.original_tracks[0]
+            first_set_id = first_item.get('setVideoId')
+            
+            if first_set_id == set_video_id:
+                 print("Item already at top.")
+                 return
+            
+            self.client.edit_playlist(self.playlist_id, moveItem=(set_video_id, first_set_id))
+            
+            GLib.idle_add(self.load_playlist, self.playlist_id)
+        except Exception as e:
+            print(f"Error moving track: {e}")
 
     def set_compact_mode(self, compact):
         if compact:
