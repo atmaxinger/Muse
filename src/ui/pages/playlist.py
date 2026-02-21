@@ -2,7 +2,7 @@ from gi.repository import Gtk, Adw, GObject, GLib, Pango, Gdk, Gio
 import threading
 import re
 from api.client import MusicClient
-from ui.utils import AsyncImage
+from ui.utils import AsyncImage, LikeButton
 
 class PlaylistPage(Adw.Bin):
     __gsignals__ = {
@@ -758,6 +758,11 @@ class PlaylistPage(Adw.Bin):
                 dur_lbl.set_valign(Gtk.Align.CENTER)
                 dur_lbl.set_margin_end(6)
                 row.add_suffix(dur_lbl)
+
+            # Like Button
+            if t.get('videoId'):
+                like_btn = LikeButton(self.client, t['videoId'], t.get('likeStatus', 'INDIFFERENT'))
+                row.add_suffix(like_btn)
 
     def on_song_activated(self, box, row):
         if hasattr(row, 'video_data'):

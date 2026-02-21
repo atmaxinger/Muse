@@ -25,13 +25,12 @@ This is a list of all the features that are planned for Mixtapes:
 - [-] **Library**: Access your playlists and liked songs.
   - [-] Playlists
     > Read only, cannot create or edit playlists yet.
-  - [-] Liked songs
-    > Read only, cannot like or unlike songs yet.
+  - [x] Liked songs
 - [x] **Search**: Search for songs, albums, and artists.
 - [-] **Artist Page**: View artist details and discography.
   - [x] Basic artist info.
   - [_] Artist related artists.
-  - [x] Artist top tracks.
+  - [-] Artist top tracks.
     > Currently only the first 5 tracks are shown, need to implement a "Show more" button as seen in the Web Player which would let you see the entire discography as well.
   - [-] Artist albums.
     > Only the first 10 albums are shown, need to implement a "Show more" button.
@@ -39,10 +38,10 @@ This is a list of all the features that are planned for Mixtapes:
     > Only the first 10 singles are shown, need to implement a "Show more" button.
   - [-] Artist videos.
     > Only the first 10 videos are shown, need to implement a "Show more" button.
-  - [_] Artist Play button
-    > This button should start playing the artist's whole discography, not implemented yet.
-  - [_] Artist Shuffle button
-    > This button should start playing the artist's whole discography in a random order, not implemented yet.
+  - [-] Artist Play button
+    > The button works, but only plays the top 5 tracks.
+  - [-] Artist Shuffle button
+    > The button works, but only plays the top 5 tracks in a random order.
   - [_] Artist Subscribe/Unsubscribe button
     > This button should subscribe/unsubscribe the artist, not implemented yet.
 - [-] **Playlist Page**: View and play playlists.
@@ -52,7 +51,7 @@ This is a list of all the features that are planned for Mixtapes:
   - [x] Playlist Shuffle button
   - [x] Playlist Order
   - [x] Playlist Cover Change
-    > Currently the playlist cover can be changed, however, changing it in the app isnt fully added.
+    > Currently the playlist cover can be changed, however, changing it in the app isn't fully added.
   - [_] Playlist Change Visibility
     > Currently the playlist visibility cannot be changed.
   - [_] Playlist Change Description
@@ -72,12 +71,10 @@ This is a list of all the features that are planned for Mixtapes:
     - [x] Change order of song
     - [x] Shuffle
     - [_] Repeat modes (single track, loop queue)
-  - [_] Volume control
+  - [x] Volume control
 - [_] **Caching**: Cache data to reduce latency and bandwidth usage
 - [-] **Responsive Design**: Mobile-friendly layout with adaptive UI.
-  > Mostly there, but there remain some random edge cases with small width windows.
-  > Help needed on this one!
-  > Desktop also needs to use the empty space better.
+  > Desktop needs to use the empty space better.
 - [_] **MPRIS Support**: Control playback from system media controls.
 - [_] **Discord RPC**: Show your current track on Discord.
 - [_] **Lyrics**: View synchronized lyrics, maybe even using BetterLyrics API.
@@ -86,9 +83,12 @@ This is a list of all the features that are planned for Mixtapes:
 - [_] **Radio / Mixes**: Start a radio station from a song or artist.
 - [_] **Dedicated Data Directory**: Move all the data like cookies, cache, etc. to a dedicated directory instead of the project root directory.
 - [_] **Background Playback**: Play music in the background, even when the main window is closed.
-- [_] **Flatpak**: Package Mixtapes as a Flatpak.
+- [-] **Flatpak**: Package Mixtapes as a Flatpak.
+  - [x] Flatpak build
+  - [-] Flathub release
+  - [-] App icon
 - [_] **AppImage**: Package Mixtapes as an AppImage.
-- [_] **AUR**: Package Mixtapes as an AUR package.
+- [x] **AUR**: Package Mixtapes as an AUR package.
 
 If you got any more ideas or bug reports, feel free to open an issue.
 

@@ -1,7 +1,7 @@
 from gi.repository import Gtk, Adw, GObject, GLib, Pango, Gdk, Gio
 import threading
 from api.client import MusicClient
-from ui.utils import AsyncImage, AsyncPicture
+from ui.utils import AsyncImage, AsyncPicture, LikeButton
 
 class ArtistPage(Adw.Bin):
     __gsignals__ = {
@@ -39,72 +39,125 @@ class ArtistPage(Adw.Bin):
         content_box.set_margin_end(12)
         self.content_box = content_box
         
-        # 1. Header Info (Banner Style)
-        self.banner_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.banner_container.set_vexpand(False)
-        self.banner_container.set_hexpand(True)
-        self.banner_container.set_size_request(-1, 260) 
-        
+        # 1. Header Grid (The new robust layout)
+        self.header_grid = Gtk.Grid()
+        self.header_grid.set_column_homogeneous(True)
+        content_box.append(self.header_grid)
+
+        # 1a. Visual Banner Overlay
+        self.banner_overlay = Gtk.Overlay()
+        self.banner_overlay.set_vexpand(False)
+        self.banner_overlay.set_hexpand(True)
+        self.banner_overlay.set_valign(Gtk.Align.START)
+        self.banner_overlay.set_size_request(-1, 260)
+
         # Banner Image
-        self.avatar = AsyncPicture() 
+        self.avatar = AsyncPicture()
         self.avatar.set_hexpand(True)
-        self.avatar.set_vexpand(True) 
+        self.avatar.set_vexpand(True)
         self.avatar.set_halign(Gtk.Align.FILL)
         self.avatar.set_valign(Gtk.Align.FILL)
         self.avatar.set_content_fit(Gtk.ContentFit.COVER)
-        
+
         self.banner_wrapper = Gtk.Box()
         self.banner_wrapper.set_overflow(Gtk.Overflow.HIDDEN)
-        self.banner_wrapper.add_css_class("card")
+        self.banner_wrapper.add_css_class("banner-top-rounded")
         self.banner_wrapper.set_hexpand(True)
-        self.banner_wrapper.set_vexpand(True)
+        self.banner_wrapper.set_vexpand(False)
+        self.banner_wrapper.set_size_request(-1, 260)
         self.banner_wrapper.append(self.avatar)
+        self.banner_overlay.set_child(self.banner_wrapper)
+
+        # Visual Scrim
+        self.banner_scrim = Gtk.Box()
+        self.banner_scrim.set_vexpand(True)
+        self.banner_scrim.set_hexpand(True)
+        self.banner_scrim.add_css_class("banner-scrim")
+        self.banner_overlay.add_overlay(self.banner_scrim)
+
+        # Attach banner to the grid
+        self.header_grid.attach(self.banner_overlay, 0, 0, 1, 1)
+
+        # 1b. Info Overlay Box
+        # This box overlaps the banner bottom naturally within the same grid cell
+        self.info_overlay_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.info_overlay_box.set_margin_top(160)  # Standard positive margin offset
+        self.info_overlay_box.set_margin_start(16)
+        self.info_overlay_box.set_margin_end(16)
+        self.info_overlay_box.set_margin_bottom(24)
+        self.info_overlay_box.set_vexpand(False)
+        self.info_overlay_box.set_valign(Gtk.Align.START)
         
-        self.banner_container.append(self.banner_wrapper)
-        content_box.append(self.banner_container)
-        
-        # Info Box
-        self.info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.info_box.set_margin_top(24)
-        self.info_box.set_margin_start(12)
-        self.info_box.set_margin_end(12)
-        
+        # Attach info to the SAME cell in the grid
+        self.header_grid.attach(self.info_overlay_box, 0, 0, 1, 1)
+
+
         self.name_label = Gtk.Label(label="Artist Name")
-        self.name_label.add_css_class("title-1") 
+        self.name_label.add_css_class("title-1")
         self.name_label.set_halign(Gtk.Align.START)
-        self.info_box.append(self.name_label)
-        
-        stats_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.name_label.add_css_class("banner-text") # Still white with shadow
+        self.info_overlay_box.append(self.name_label)
+
         self.subscribers_label = Gtk.Label(label="")
-        self.subscribers_label.add_css_class("title-4")
-        self.subscribers_label.set_opacity(0.8)
-        stats_box.append(self.subscribers_label)
-        self.info_box.append(stats_box)
-        
+        self.subscribers_label.add_css_class("caption")
+        self.subscribers_label.set_opacity(0.85)
+        self.subscribers_label.set_halign(Gtk.Align.START)
+        self.subscribers_label.add_css_class("banner-text")
+        self.info_overlay_box.append(self.subscribers_label)
+
+        # Actions row
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        actions.set_margin_top(8)
+        actions.set_valign(Gtk.Align.CENTER)
+        self.info_overlay_box.append(actions)
+
+        self.play_btn = Gtk.Button(label="Play")
+        self.play_btn.add_css_class("suggested-action")
+        self.play_btn.add_css_class("pill")
+        self.play_btn.connect("clicked", self.on_play_clicked)
+        actions.append(self.play_btn)
+
+        self.shuffle_btn = Gtk.Button()
+        self.shuffle_btn.set_icon_name("media-playlist-shuffle-symbolic")
+        self.shuffle_btn.add_css_class("circular")
+        self.shuffle_btn.set_valign(Gtk.Align.CENTER)
+        self.shuffle_btn.set_size_request(48, 48)
+        self.shuffle_btn.set_tooltip_text("Shuffle")
+        self.shuffle_btn.connect("clicked", self.on_shuffle_clicked)
+        actions.append(self.shuffle_btn)
+
+        self.subscribe_btn = Gtk.Button()
+        self.subscribe_btn.set_icon_name("starred-symbolic")
+        self.subscribe_btn.add_css_class("circular")
+        self.subscribe_btn.add_css_class("flat")
+        self.subscribe_btn.set_valign(Gtk.Align.CENTER)
+        self.subscribe_btn.set_size_request(48, 48)
+        self.subscribe_btn.set_tooltip_text("Subscribe")
+        actions.append(self.subscribe_btn)
+
+        # Description
         self.description_label = Gtk.Label(label="")
         self.description_label.add_css_class("body")
         self.description_label.set_wrap(True)
-        self.description_label.set_max_width_chars(80)
-        self.description_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.description_label.set_lines(3)
+        self.description_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self.description_label.set_halign(Gtk.Align.START)
-        self.info_box.append(self.description_label)
-        
-        # Actions
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        self.shuffle_btn = Gtk.Button(label="Shuffle")
-        self.shuffle_btn.add_css_class("suggested-action")
-        self.shuffle_btn.add_css_class("pill")
-        self.shuffle_btn.connect("clicked", self.on_shuffle_clicked)
-        actions.append(self.shuffle_btn)
-        
-        self.subscribe_btn = Gtk.Button(label="Subscribe")
-        self.subscribe_btn.add_css_class("pill")
-        actions.append(self.subscribe_btn)
-        
-        self.info_box.append(actions)
-        content_box.append(self.info_box)
-        
+        self.description_label.set_xalign(0)
+        self.description_label.set_lines(0)
+        self.description_label.set_ellipsize(Pango.EllipsizeMode.NONE)
+        self.description_label.set_margin_top(12)
+        self.info_overlay_box.append(self.description_label)
+
+        self.read_more_btn = Gtk.Button(label="Read more")
+        self.read_more_btn.add_css_class("flat")
+        self.read_more_btn.add_css_class("read-more-link")
+        self.read_more_btn.set_halign(Gtk.Align.START)
+        self.read_more_btn.set_visible(False)
+        self.read_more_btn.set_cursor(Gdk.Cursor.new_from_name("pointer"))
+        self.read_more_btn.connect("clicked", self._on_read_more_toggle)
+        self._description_expanded = False
+        self.info_overlay_box.append(self.read_more_btn)
+
+
         # 2. Sections
         self.sections_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=32)
         self.sections_box.set_margin_top(12)
@@ -157,11 +210,36 @@ class ArtistPage(Adw.Bin):
         # Header
         self.artist_name = data.get('name') or 'Unknown Artist'
         self.name_label.set_label(self.artist_name)
-        self.description_label.set_label(data.get('description') or '')
-        
+        description = data.get('description') or ''
+        print(f"DEBUG description raw: {repr(description)}")
+        self._description_expanded = False
+        if description:
+            import re
+            # Strip trailing Wikipedia attribution ("From Wikipedia, ...")
+            clean = re.sub(r'\s*From Wikipedia[^\n]*', '', description, flags=re.IGNORECASE).strip()
+            # Collapse only 2+ SPACES, preserve single \n
+            clean = re.sub(r'[^\S\n]{2,}', ' ', clean)
+            # Collapse only 3+ \n into 2 \n
+            clean = re.sub(r'\n{3,}', '\n\n', clean)
+            self._description_clean = clean
+            if len(clean) > 280:
+                preview = clean[:280].rsplit(' ', 1)[0] + '…'
+                self.description_label.set_label(preview)
+                self.read_more_btn.set_label('Read more')
+                self.read_more_btn.set_visible(True)
+            else:
+                self.description_label.set_label(clean)
+                self.read_more_btn.set_visible(False)
+            self.description_label.set_visible(True)
+        else:
+            self._description_clean = ''
+            self.description_label.set_label('')
+            self.description_label.set_visible(False)
+            self.read_more_btn.set_visible(False)
+
         subs = data.get('subscribers') or ''
         if subs:
-            subs += " Subscribers"
+            subs += " subscribers"
         
         views = data.get('views') 
         if views:
@@ -220,12 +298,45 @@ class ArtistPage(Adw.Bin):
             song_title = item.get('title', 'Unknown')
             row.set_title(GLib.markup_escape_text(song_title))
             
+            # Artists
+            artist_list = item.get('artists', [])
+            if isinstance(artist_list, list):
+                artist_names = ", ".join([a.get('name', 'Unknown') for a in artist_list if isinstance(a, dict)])
+            else:
+                artist_names = ""
+                
+            # Album
             album_name = item.get('album', {}).get('name') if isinstance(item.get('album'), dict) else item.get('album')
             if album_name == song_title:
                 album_name = "Single"
             
-            row.set_subtitle(GLib.markup_escape_text(album_name or ''))
+            subtitle = artist_names
+            if album_name:
+                if subtitle:
+                    subtitle += f" • {album_name}"
+                else:
+                    subtitle = album_name
             
+            row.set_subtitle(GLib.markup_escape_text(subtitle or ''))
+            
+            # Duration Suffix
+            duration = item.get('duration') or ""
+            if not duration and 'duration_seconds' in item:
+                ds = item['duration_seconds']
+                duration = f"{ds // 60}:{ds % 60:02d}"
+            
+            if duration:
+                dur_label = Gtk.Label(label=duration)
+                dur_label.add_css_class("caption")
+                dur_label.set_opacity(0.7)
+                dur_label.set_valign(Gtk.Align.CENTER)
+                row.add_suffix(dur_label)
+
+            # Like Button
+            if item.get('videoId'):
+                like_btn = LikeButton(self.client, item['videoId'], item.get('likeStatus', 'INDIFFERENT'))
+                row.add_suffix(like_btn)
+
             thumbnails = item.get('thumbnails', [])
             thumb_url = thumbnails[-1]['url'] if thumbnails else None
             
@@ -390,19 +501,41 @@ class ArtistPage(Adw.Bin):
                      'author': self.artist_name
                  })
 
+    def _build_queue_tracks(self):
+        queue_tracks = []
+        for song in self.current_songs:
+            artist_name = ", ".join([a.get('name', '') for a in song.get('artists', [])])
+            thumb = song.get('thumbnails', [])[-1]['url'] if song.get('thumbnails') else None
+            queue_tracks.append({
+                'videoId': song.get('videoId'),
+                'title': song.get('title'),
+                'artist': artist_name,
+                'thumb': thumb
+            })
+        return queue_tracks
+
+    def on_play_clicked(self, btn):
+        if hasattr(self, 'current_songs') and self.current_songs:
+            self.player.set_queue(self._build_queue_tracks(), 0)
+
     def on_shuffle_clicked(self, btn):
         if hasattr(self, 'current_songs') and self.current_songs:
-            queue_tracks = []
-            for song in self.current_songs:
-                artist_name = ", ".join([a.get('name', '') for a in song.get('artists', [])])
-                thumb = song.get('thumbnails', [])[-1]['url'] if song.get('thumbnails') else None
-                queue_tracks.append({
-                    'videoId': song.get('videoId'),
-                    'title': song.get('title'),
-                    'artist': artist_name,
-                    'thumb': thumb
-                })
-            self.player.set_queue(queue_tracks, -1, shuffle=True)
+            self.player.set_queue(self._build_queue_tracks(), -1, shuffle=True)
+
+    def _on_read_more_toggle(self, btn):
+        clean = getattr(self, '_description_clean', '')
+        if not clean:
+            return
+        self._description_expanded = not getattr(self, '_description_expanded', False)
+        if self._description_expanded:
+            self.description_label.set_label(clean)
+            self.read_more_btn.set_label('Show less')
+        else:
+            preview = clean[:280].rsplit(' ', 1)[0] + '…'
+            self.description_label.set_label(preview)
+            self.read_more_btn.set_label('Read more')
+
+
 
     def _on_scroll(self, vadjust):
         if vadjust.get_value() > 100:

@@ -246,17 +246,20 @@ class MusicClient:
         print(json.dumps(res, indent=2))
         return res
 
-    def edit_playlist(self, playlist_id, **kwargs):
+    def rate_song(self, video_id, rating='LIKE'):
+        """
+        Rate a song: 'LIKE', 'DISLIKE', or 'INDIFFERENT'.
+        """
         if not self.is_authenticated():
-            return None
+            return False
         try:
-            res = self.api.edit_playlist(playlist_id, **kwargs)
-            print(f"--- API RESPONSE: edit_playlist({playlist_id}) ---")
+            res = self.api.rate_song(video_id, rating)
+            print(f"--- API RESPONSE: rate_song({video_id}, {rating}) ---")
             print(json.dumps(res, indent=2))
-            return res
+            return True
         except Exception as e:
-            print(f"failed while editing playlist: {e}")
-            return None
+            print(f"Error rating song: {e}")
+            return False
 
     def validate_session(self):
         """

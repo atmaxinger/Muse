@@ -238,12 +238,17 @@ class SearchPage(Adw.Bin):
             thumbnails = item.get('thumbnails', [])
             thumb_url = thumbnails[-1]['url'] if thumbnails else None
             
-            from ui.utils import AsyncImage
+            from ui.utils import AsyncImage, LikeButton
             img = AsyncImage(url=thumb_url, size=40)
             if not thumb_url:
                  img.set_from_icon_name("media-optical-symbolic")
             
             row.add_prefix(img)
+            
+            # Like Button
+            if item.get('videoId'):
+                like_btn = LikeButton(self.client, item['videoId'], item.get('likeStatus', 'INDIFFERENT'))
+                row.add_suffix(like_btn)
             
             row.item_data = item
             row.set_activatable(True)
