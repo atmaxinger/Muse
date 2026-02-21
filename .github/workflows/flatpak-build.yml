@@ -1,0 +1,55 @@
+name: Build Flatpak
+
+on:
+  push:
+    branches:
+      #- main
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  build-flatpak:
+    name: Build Flatpak (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm64
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Flatpak and flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+      
+      - name: Add Flathub repository
+        run: |
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      
+      - name: Install GNOME runtime and SDK
+        run: |
+          sudo flatpak install -y flathub org.gnome.Platform//${{ matrix.arch }}/49
+          sudo flatpak install -y flathub org.gnome.Sdk//${{ matrix.arch }}/49
+          sudo flatpak install -y flathub org.freedesktop.Sdk.Extension.node24//${{ matrix.arch }}/24.08
+      
+      - name: Build Flatpak
+        run: |
+          flatpak-builder --arch=${{ matrix.arch }} --repo=repo --force-clean build-dir com.pocoguy.Muse.yaml
+      
+      - name: Export as bundle
+        run: |
+          flatpak build-bundle repo com.pocoguy.Muse-${{ matrix.arch }}.flatpak com.pocoguy.Muse
+      
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: com.pocoguy.Muse-${{ matrix.arch }}.flatpak
+          retention-days: 90
