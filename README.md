@@ -98,6 +98,7 @@ If you got any more ideas or bug reports, feel free to open an issue.
 - Node.js (needed for yt-dlp-ejs, helps with playback issues)
 - GTK4 (including development headers)
 - Libadwaita (including development headers)
+- WebKitGTK 6.0 (including development headers)
 - GStreamer plugins (base, good, bad, ugly)
 
 ## Installation
@@ -123,14 +124,14 @@ Before you start, make sure to install the dependencies.
 
 Here are install commands for some common package managers:
 
-- Arch Linux: `sudo pacman -S git python-pip nodejs gtk4 libadwaita gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly`
+- Arch Linux: `sudo pacman -S git python-pip nodejs gtk4 libadwaita webkitgtk-6.0 gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly`
 
-- Debian/Ubuntu: `sudo apt install git python3 python3-pip nodejs libgtk-4-dev libadwaita-1-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly`
+- Debian/Ubuntu: `sudo apt install git python3 python3-pip nodejs libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly`
 
 > [!NOTE]
 > If you are on Debian/Ubuntu, you should probably use Flatpak to avoid outdated packages.
 
-- Fedora: `sudo dnf install git python3 python3-pip nodejs gtk4-devel adwaita-gtk4-devel gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad gstreamer1-plugins-ugly`
+- Fedora: `sudo dnf install git python3 python3-pip nodejs gtk4-devel adwaita-gtk4-devel webkitgtk6.0-devel gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad gstreamer1-plugins-ugly`
 
 1. Clone the repository:
 
@@ -196,6 +197,9 @@ Then run `flatpak run --command=sh com.pocoguy.Muse` and inside the shell run `m
 Paste the headers and press Ctrl-D.
 
 ## Authentication
+
+> [!INFO]
+> You can now authenticate using the app itself through an embedded WebKit browser!
 
 This app uses `ytmusicapi` for backend data. Authentication allows access to your library and higher quality streams.
 

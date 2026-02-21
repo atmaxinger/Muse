@@ -316,9 +316,9 @@ class MainWindow(Adw.ApplicationWindow):
         action.connect("activate", self.show_about)
         self.add_action(action)
 
-        # Preferences Action (Placeholder)
+        # Preferences Action
         pref_action = Gio.SimpleAction.new("preferences", None)
-        # pref_action.connect("activate", self.show_preferences)
+        pref_action.connect("activate", self.show_preferences)
         self.add_action(pref_action)
 
     def show_about(self, action, param):
@@ -330,6 +330,43 @@ class MainWindow(Adw.ApplicationWindow):
         about.set_copyright("© 2026 POCOGuy")
         about.set_license_type(Gtk.License.GPL_3_0)
         about.present(self)
+
+    def show_preferences(self, action, param):
+        prefs = Adw.PreferencesWindow()
+        prefs.set_transient_for(self)
+
+        page = Adw.PreferencesPage()
+        page.set_title("General")
+        page.set_icon_name("settings-symbolic")
+        prefs.add(page)
+
+        group = Adw.PreferencesGroup()
+        group.set_title("Account")
+        page.add(group)
+
+        # Sign Out Row
+        row = Adw.ActionRow()
+        row.set_title("Sign Out")
+        row.set_subtitle("Remove saved credentials and log out of YouTube Music")
+
+        logout_btn = Gtk.Button(label="Sign Out")
+        logout_btn.set_valign(Gtk.Align.CENTER)
+        logout_btn.add_css_class("destructive-action")
+        logout_btn.connect("clicked", self.on_logout_clicked, prefs)
+
+        row.add_suffix(logout_btn)
+        group.add(row)
+
+        prefs.present()
+
+    def on_logout_clicked(self, btn, prefs_window):
+        from api.client import MusicClient
+
+        client = MusicClient()
+        if client.logout():
+            prefs_window.close()
+            # Trigger auth check to show login dialog
+            self.check_auth()
 
     def init_pages(self):
         from ui.pages.home import HomePage

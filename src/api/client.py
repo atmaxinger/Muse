@@ -6,6 +6,7 @@ import ytmusicapi.navigation
 # Monkeypatch ytmusicapi.navigation.nav to handle UI changes like musicImmersiveHeaderRenderer
 _original_nav = ytmusicapi.navigation.nav
 
+
 def robust_nav(root, items, none_if_absent=False):
     if root is None:
         return None
@@ -13,15 +14,25 @@ def robust_nav(root, items, none_if_absent=False):
         current = root
         for i, k in enumerate(items):
             # Fallback for musicVisualHeaderRenderer -> musicImmersiveHeaderRenderer
-            if k == "musicVisualHeaderRenderer" and isinstance(current, dict) and k not in current and "musicImmersiveHeaderRenderer" in current:
+            if (
+                k == "musicVisualHeaderRenderer"
+                and isinstance(current, dict)
+                and k not in current
+                and "musicImmersiveHeaderRenderer" in current
+            ):
                 k = "musicImmersiveHeaderRenderer"
             # Fallback for musicDetailHeaderRenderer -> musicResponsiveHeaderRenderer
-            if k == "musicDetailHeaderRenderer" and isinstance(current, dict) and k not in current and "musicResponsiveHeaderRenderer" in current:
+            if (
+                k == "musicDetailHeaderRenderer"
+                and isinstance(current, dict)
+                and k not in current
+                and "musicResponsiveHeaderRenderer" in current
+            ):
                 k = "musicResponsiveHeaderRenderer"
             if k == "runs" and isinstance(current, dict) and k not in current:
                 if none_if_absent:
                     return None
-                if i < len(items) - 1 and items[i+1] == 0:
+                if i < len(items) - 1 and items[i + 1] == 0:
                     current = [{"text": ""}]
                     continue
                 else:
@@ -35,7 +46,9 @@ def robust_nav(root, items, none_if_absent=False):
             return None
         return _original_nav(root, items, none_if_absent)
 
+
 ytmusicapi.navigation.nav = robust_nav
+
 
 class MusicClient:
     _instance = None
@@ -48,7 +61,7 @@ class MusicClient:
 
     def _init(self):
         self.api = None
-        self.auth_path = os.path.join(os.getcwd(), 'data', 'headers_auth.json')
+        self.auth_path = os.path.join(os.getcwd(), "data", "headers_auth.json")
         self._is_authed = False
         self.try_login()
 
@@ -58,16 +71,13 @@ class MusicClient:
             try:
                 print(f"Loading saved auth from {self.auth_path}")
                 # Load headers to check/fix them before init
-                with open(self.auth_path, 'r') as f:
-                     headers = json.load(f)
-                
-                # Enforce English
-                if 'Accept-Language' not in headers or 'en-' not in headers['Accept-Language']:
-                    headers['Accept-Language'] = 'en-US,en;q=0.9'
-                    with open(self.auth_path, 'w') as f:
-                        json.dump(headers, f)
+                with open(self.auth_path, "r") as f:
+                    headers = json.load(f)
 
-                self.api = YTMusic(self.auth_path)
+                # Normalize keys for ytmusicapi and remove Bearer tokens
+                headers = self._normalize_headers(headers)
+
+                self.api = YTMusic(auth=headers)
                 if self.validate_session():
                     print("Authenticated via saved session.")
                     self._is_authed = True
@@ -78,17 +88,95 @@ class MusicClient:
                 print(f"Failed to load saved session: {e}")
 
         # 2. Check for browser.json in cwd (Manually provided)
-        browser_path = os.path.join(os.getcwd(), 'browser.json')
+        browser_path = os.path.join(os.getcwd(), "browser.json")
         if os.path.exists(browser_path):
-             print(f"Found browser.json at {browser_path}. Importing...")
-             if self.login(browser_path):
-                 return True
+            print(f"Found browser.json at {browser_path}. Importing...")
+            if self.login(browser_path):
+                return True
 
         # 3. Fallback
         print("Falling back to unauthenticated mode.")
         self.api = YTMusic()
         self._is_authed = False
         return False
+
+    def _normalize_headers(self, headers):
+        """
+        Ensures headers match what ytmusicapi expects for a browser session.
+        Preserves Authorization (if not Bearer) and ensures required keys exist.
+        """
+        print("Standardizing headers for ytmusicapi...")
+        normalized = {}
+        for k, v in headers.items():
+            lk = k.lower().replace("-", "_")
+
+            # Whitelist standard browser headers with Title-Case
+            if lk == "cookie":
+                normalized["Cookie"] = v
+            elif lk == "user_agent":
+                normalized["User-Agent"] = v
+            elif lk == "accept_language":
+                normalized["Accept-Language"] = v
+            elif lk == "content_type":
+                normalized["Content-Type"] = v
+            elif lk == "authorization":
+                # Only keep if it's NOT an OAuth Bearer token
+                if v.lower().startswith("bearer"):
+                    print("  [Security] Dropping OAuth Bearer token.")
+                else:
+                    normalized["Authorization"] = v
+            elif lk == "x_goog_authuser":
+                normalized["X-Goog-AuthUser"] = v
+            # Blacklist OAuth-triggering keys
+            elif lk in [
+                "oauth_credentials",
+                "client_id",
+                "client_secret",
+                "access_token",
+                "refresh_token",
+                "token_type",
+                "expires_at",
+                "expires_in",
+            ]:
+                print(f"  [Security] Dropping OAuth-triggering field: {k}")
+                continue
+            else:
+                # Title-Case other headers as a safe default
+                nk = "-".join([part.capitalize() for part in k.split("-")])
+                if nk.lower().startswith("x-"):
+                    nk = k  # Preserve X-Goog etc. original casing
+                normalized[nk] = v
+
+        # Cleanup duplicates that might have been created by normalization
+        final = {}
+        for k, v in normalized.items():
+            if k in [
+                "Cookie",
+                "User-Agent",
+                "Accept-Language",
+                "Content-Type",
+                "Authorization",
+                "X-Goog-AuthUser",
+            ]:
+                final[k] = v
+            elif k.lower() not in [
+                "cookie",
+                "user-agent",
+                "accept-language",
+                "content-type",
+                "authorization",
+                "x-goog-authuser",
+            ]:
+                final[k] = v
+
+        # Ensure minimal required headers for stability
+        if "Accept-Language" not in final:
+            final["Accept-Language"] = "en-US,en;q=0.9"
+        if "Content-Type" not in final:
+            final["Content-Type"] = "application/json"
+
+        print(f"Finalized headers: {list(final.keys())}")
+        return final
 
     def is_authenticated(self):
         return self._is_authed and self.api is not None
@@ -101,7 +189,7 @@ class MusicClient:
             headers = None
             if isinstance(auth_input, str):
                 if os.path.exists(auth_input):
-                    with open(auth_input, 'r') as f:
+                    with open(auth_input, "r") as f:
                         headers = json.load(f)
                 else:
                     # Try parsing as JSON string
@@ -110,45 +198,48 @@ class MusicClient:
                     except json.JSONDecodeError:
                         # Legacy raw headers string support
                         from ytmusicapi.auth.browser import setup_browser
-                        headers = json.loads(setup_browser(filepath=None, headers_raw=auth_input))
+
+                        headers = json.loads(
+                            setup_browser(filepath=None, headers_raw=auth_input)
+                        )
             elif isinstance(auth_input, dict):
                 headers = auth_input
-            
+
             if not headers:
                 print("Invalid auth input.")
                 return False
 
             # CRITICAL: Enforce Headers for Stability
             # 1. Accept-Language must be English to avoid parsing errors
-            headers['Accept-Language'] = 'en-US,en;q=0.9'
-            
+            headers["Accept-Language"] = "en-US,en;q=0.9"
+
             # 2. Ensure User-Agent is consistent/modern if missing
-            if 'User-Agent' not in headers:
-                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+            if "User-Agent" not in headers:
+                headers["User-Agent"] = (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+                )
 
             # 3. Content-Type often needed for JSON payloads
-            if 'Content-Type' not in headers:
-                headers['Content-Type'] = 'application/json; charset=UTF-8'
-                
-            # 4. Remove OAuth fields if they accidentally crept in and are partial/broken
-            # (Though if oauth.json is specifically imported, maybe we handle it differently? 
-            #  But we are pivoting to browser.json for now.)
-            if 'oauth_credentials' in headers and 'access_token' not in headers:
-                 # If it looks like half-baked oauth, maybe ignore or warn?
-                 # ideally we just use the cookie.
-                 pass
+            if "Content-Type" not in headers:
+                headers["Content-Type"] = "application/json; charset=UTF-8"
+
+            # 4. Standardize headers and remove Bearer tokens
+            headers = self._normalize_headers(headers)
 
             # Save to data/headers_auth.json (Overwrite)
             os.makedirs(os.path.dirname(self.auth_path), exist_ok=True)
             if os.path.exists(self.auth_path):
-                try: os.remove(self.auth_path)
-                except: pass
-            with open(self.auth_path, 'w') as f:
+                try:
+                    os.remove(self.auth_path)
+                except Exception:
+                    pass
+            with open(self.auth_path, "w") as f:
                 json.dump(headers, f)
-            
-            # Initialize API
-            self.api = YTMusic(self.auth_path)
-            
+
+            # Initialize API with dict directly
+            print(f"Initializing YTMusic with headers: {list(headers.keys())}")
+            self.api = YTMusic(auth=headers)
+
             # Validate
             if self.validate_session():
                 self._is_authed = True
@@ -161,7 +252,10 @@ class MusicClient:
                 return False
 
         except Exception as e:
+            import traceback
+
             print(f"Login exception: {e}")
+            traceback.print_exc()
             self.api = YTMusic()
             self._is_authed = False
             return False
@@ -176,7 +270,7 @@ class MusicClient:
 
     def get_song(self, video_id):
         if not self.api:
-             return None
+            return None
         try:
             res = self.api.get_song(video_id)
             print(f"--- API RESPONSE: get_song({video_id}) ---")
@@ -218,17 +312,17 @@ class MusicClient:
         except Exception as e:
             print(f"Error getting artist details: {e}")
             return None
-        
+
     def get_liked_songs(self, limit=100):
         if not self.is_authenticated():
             return []
         # Liked songs is actually a playlist 'LM'
         res = self.api.get_liked_songs(limit=limit)
-        print(f"--- API RESPONSE: get_liked_songs ---")
+        print("--- API RESPONSE: get_liked_songs ---")
         print(json.dumps(res, indent=2))
         return res
 
-    def get_charts(self, country='US'):
+    def get_charts(self, country="US"):
         if not self.api:
             return {}
         return self.api.get_charts(country=country)
@@ -246,7 +340,7 @@ class MusicClient:
         print(json.dumps(res, indent=2))
         return res
 
-    def rate_song(self, video_id, rating='LIKE'):
+    def rate_song(self, video_id, rating="LIKE"):
         """
         Rate a song: 'LIKE', 'DISLIKE', or 'INDIFFERENT'.
         """
@@ -267,7 +361,7 @@ class MusicClient:
         """
         if self.api is None:
             return False
-            
+
         try:
             # Try to fetch liked songs (requires auth)
             # Just metadata is enough
@@ -277,4 +371,18 @@ class MusicClient:
             print(f"Session validation failed: {e}")
             return False
 
+    def logout(self):
+        """
+        Log out by deleting the saved auth file and resetting the API.
+        """
+        if os.path.exists(self.auth_path):
+            try:
+                os.remove(self.auth_path)
+                print(f"Deleted auth file at {self.auth_path}")
+            except Exception as e:
+                print(f"Error deleting auth file: {e}")
 
+        self.api = YTMusic()
+        self._is_authed = False
+        print("Logged out. API reset to unauthenticated mode.")
+        return True
