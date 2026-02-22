@@ -1,5 +1,5 @@
 import gi
-from gi.repository import Gtk, Adw, GObject, Pango
+from gi.repository import Gtk, Adw, GObject, GLib, Gdk, Pango
 from ui.utils import AsyncPicture, LikeButton, MarqueeLabel
 from ui.queue_panel import QueuePanel
 
@@ -9,10 +9,21 @@ class ExpandedPlayer(Gtk.Box):
     def dismiss(self):
         pass
 
-    def __init__(self, player, **kwargs):
+    def _make_cover(self):
+        img = AsyncPicture(crop_to_square=True)
+        img.add_css_class("rounded")
+        img.set_halign(Gtk.Align.FILL)
+        img.set_valign(Gtk.Align.FILL)
+        img.set_hexpand(False)
+        img.set_vexpand(True)
+        img.set_content_fit(Gtk.ContentFit.COVER)
+        return img
+
+    def __init__(self, player, on_artist_click=None, on_album_click=None, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, **kwargs)
         self.player = player
-        self.player_state = "stopped"
+        self.on_artist_click = on_artist_click
+        self.on_album_click = on_album_click
 
         # 1. The Stack: Transitions between Player and Queue
         self.stack = Gtk.Stack()
@@ -27,40 +38,44 @@ class ExpandedPlayer(Gtk.Box):
         self.player_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.player_scroll.set_propagate_natural_height(True)
 
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        main_box.set_margin_top(12)
-        main_box.set_margin_bottom(24)
-        main_box.set_margin_start(32)
-        main_box.set_margin_end(32)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_box.set_margin_top(0)
+        main_box.set_margin_bottom(16)
+        main_box.set_margin_start(24)
+        main_box.set_margin_end(24)
 
-        # Header with Dismiss Button
+        # Header Spacer
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header_box.set_margin_top(8)
-        header_box.set_margin_bottom(16)
-
-        dismiss_btn = Gtk.Button(icon_name="go-down-symbolic")
-        dismiss_btn.add_css_class("flat")
-        dismiss_btn.add_css_class("circular")
-        dismiss_btn.connect("clicked", lambda x: self.emit("dismiss"))
-        header_box.append(dismiss_btn)
-
-        header_spacer = Gtk.Box()
-        header_spacer.set_hexpand(True)
-        header_box.append(header_spacer)
+        header_box.set_margin_bottom(8)
         main_box.append(header_box)
 
-        # Cover Art
-        self.cover_img = AsyncPicture(crop_to_square=True)
-        self.cover_img.add_css_class("rounded")
-        self.cover_img.set_halign(Gtk.Align.FILL)
-        self.cover_img.set_valign(Gtk.Align.FILL)
+        self.covers = []
+        self.cover_img = self._make_cover()  # fallback center
 
+        self.carousel = Adw.Carousel()
+        self.carousel.set_spacing(16)
+        self.carousel.set_interactive(True)
+
+        # The frame clips to show only the center cover
         cover_frame = Gtk.AspectFrame(ratio=1.0, obey_child=False)
         cover_frame.set_halign(Gtk.Align.CENTER)
         cover_frame.set_valign(Gtk.Align.CENTER)
         cover_frame.set_vexpand(True)
         cover_frame.set_hexpand(True)
-        cover_frame.set_child(self.cover_img)
+        cover_frame.set_overflow(Gtk.Overflow.HIDDEN)
+        cover_frame.set_child(self.carousel)
+        self._cover_frame = cover_frame
+
+        # Add tap gesture for album navigation
+        cover_click = Gtk.GestureClick()
+        cover_click.connect("released", self._on_cover_tapped)
+        cover_frame.add_controller(cover_click)
+
+        self._ignore_page_change = False
+        self.carousel.connect("notify::position", self._on_carousel_position_changed)
+        self.connect("map", self._on_map)
+
         main_box.append(cover_frame)
 
         # Metadata & Like
@@ -74,7 +89,14 @@ class ExpandedPlayer(Gtk.Box):
         # --- Marquee Title ---
         self.title_label = MarqueeLabel()
         self.title_label.set_label("Not Playing")
-        self.title_label.add_css_class("title-1")
+        self.title_label.add_css_class("title-3")
+
+        self.artist_btn = Gtk.Button()
+        self.artist_btn.add_css_class("flat")
+        self.artist_btn.add_css_class("link-btn")
+        self.artist_btn.set_halign(Gtk.Align.START)
+        self.artist_btn.set_has_frame(False)
+        self.artist_btn.connect("clicked", self._on_artist_btn_clicked)
 
         self.artist_label = Gtk.Label(label="")
         self.artist_label.add_css_class("heading")
@@ -82,8 +104,10 @@ class ExpandedPlayer(Gtk.Box):
         self.artist_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.artist_label.set_halign(Gtk.Align.START)
 
+        self.artist_btn.set_child(self.artist_label)
+
         text_box.append(self.title_label)
-        text_box.append(self.artist_label)
+        text_box.append(self.artist_btn)
 
         self.like_btn = LikeButton(self.player.client, None)
         self.like_btn.set_visible(False)
@@ -136,9 +160,19 @@ class ExpandedPlayer(Gtk.Box):
         self.play_btn.set_valign(Gtk.Align.CENTER)
         self.play_btn.connect("clicked", self.on_play_clicked)
 
+        self.play_btn_stack = Gtk.Stack()
+        self.play_btn_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.play_btn_stack.set_transition_duration(200)
+
         self.play_icon = Gtk.Image.new_from_icon_name("media-playback-start-symbolic")
         self.play_icon.set_pixel_size(32)
-        self.play_btn.set_child(self.play_icon)
+        self.play_btn_stack.add_named(self.play_icon, "icon")
+
+        self.play_spinner = Adw.Spinner()
+        self.play_spinner.set_size_request(32, 32)
+        self.play_btn_stack.add_named(self.play_spinner, "spinner")
+
+        self.play_btn.set_child(self.play_btn_stack)
 
         self.next_btn = Gtk.Button(icon_name="media-skip-forward-symbolic")
         self.next_btn.set_size_request(56, 56)
@@ -223,17 +257,31 @@ class ExpandedPlayer(Gtk.Box):
         self.player.connect("state-changed", self.on_state_changed)
         self.player.connect("volume-changed", self.on_volume_changed)
 
+        # Initial state sync
+        self.on_state_changed(self.player, self.player.get_state_string())
+
+    def _on_map(self, widget):
+        GLib.idle_add(self._center_carousel)
+
+    def _center_carousel(self):
+        self._ignore_page_change = True
+        self.carousel.scroll_to(self.cover_img, animate=False)
+        self._ignore_page_change = False
+        return False
+
     # --- SIGNAL HANDLERS ---
     def on_metadata_changed(
         self, player, title, artist, thumbnail_url, video_id, like_status
     ):
-        self.title_label.set_label(title)  # Now updates MarqueeLabel
+        self.title_label.set_label(title)
         self.artist_label.set_label(artist)
         if thumbnail_url:
-            thumbnail_url = thumbnail_url.replace("w120-h120", "w640-h640").replace(
+            url_max = thumbnail_url.replace("w120-h120", "w640-h640").replace(
                 "sddefault", "maxresdefault"
             )
-            self.cover_img.load_url(thumbnail_url)
+            url_sd = url_max.replace("maxresdefault", "sddefault")
+            url_hq = url_max.replace("maxresdefault", "hqdefault")
+            self.cover_img.load_url(url_max, fallbacks=[url_hq, url_sd])
         else:
             self.cover_img.load_url(None)
 
@@ -243,29 +291,161 @@ class ExpandedPlayer(Gtk.Box):
         else:
             self.like_btn.set_visible(False)
 
+        # Preload neighbor covers and sync queue
+        self._sync_carousel_queue()
+
+    def _get_track_thumb(self, index):
+        """Get a thumbnail URL for a track at the given queue index."""
+        if index < 0 or index >= len(self.player.queue):
+            return None
+        track = self.player.queue[index]
+        thumb = track.get("thumb")
+        if not thumb and "thumbnails" in track:
+            thumbs = track.get("thumbnails", [])
+            if thumbs:
+                thumb = thumbs[-1]["url"]
+        if thumb:
+            return thumb.replace("w120-h120", "w640-h640").replace(
+                "sddefault", "maxresdefault"
+            )
+        return None
+
+    def _sync_carousel_queue(self):
+        """Sync carousel sizing to match queue and lazy-load neighbors."""
+        queue_len = len(self.player.queue)
+        idx = self.player.current_queue_index
+
+        if queue_len == 0:
+            return
+
+        self._ignore_page_change = True
+
+        # Adjust covers array to match exact queue length
+        while len(self.covers) > queue_len:
+            cover = self.covers.pop()
+            if cover.get_parent() == self.carousel:
+                self.carousel.remove(cover)
+
+        while len(self.covers) < queue_len:
+            cover = self._make_cover()
+            self.covers.append(cover)
+            self.carousel.append(cover)
+
+        if 0 <= idx < len(self.covers):
+            self.cover_img = self.covers[idx]
+
+        if 0 <= idx < len(self.covers):
+            self.cover_img = self.covers[idx]
+
+        self._last_lazy_idx = -1  # Force full reload on queue sync
+        self._lazy_load_covers_around(idx)
+
+        if 0 <= idx < len(self.covers):
+            self.carousel.scroll_to(self.covers[idx], animate=False)
+
+        GLib.timeout_add(200, self._allow_page_change)
+
+    def _lazy_load_covers_around(self, center_idx):
+        if center_idx == getattr(self, "_last_lazy_idx", -1):
+            return
+        self._last_lazy_idx = center_idx
+
+        # Lazy load +/- 5 covers around the visual center
+        for i, cover in enumerate(self.covers):
+            in_range = abs(i - center_idx) <= 5
+
+            if in_range:
+                thumb = self._get_track_thumb(i)
+                if thumb:
+                    if not cover.get_visible():
+                        cover.set_visible(True)
+
+                    # Target High-Res for actively playing song
+                    if i == self.player.current_queue_index:
+                        url_max = thumb.replace("w120-h120", "w640-h640").replace(
+                            "sddefault", "maxresdefault"
+                        )
+                        target_url = url_max
+                        fallbacks = [
+                            url_max.replace("maxresdefault", "hqdefault"),
+                            url_max.replace("maxresdefault", "sddefault"),
+                        ]
+                    else:
+                        target_url = thumb
+                        fallbacks = [
+                            thumb.replace("maxresdefault", "hqdefault"),
+                            thumb.replace("maxresdefault", "sddefault"),
+                        ]
+
+                    if cover.url != target_url:
+                        cover.load_url(target_url, fallbacks=fallbacks)
+                else:
+                    if cover.get_visible():
+                        cover.set_visible(False)
+                    if cover.url is not None:
+                        cover.load_url(None)
+            else:
+                if not cover.get_visible():
+                    cover.set_visible(True)
+                if cover.url is not None:
+                    cover.load_url(None)
+
+    def _allow_page_change(self):
+        self._ignore_page_change = False
+        return False
+
     def on_progression(self, player, pos, dur):
         self.scale.set_range(0, dur)
         self.scale.set_value(pos)
         self.pos_label.set_label(self._format_time(pos))
         self.dur_label.set_label(self._format_time(dur))
 
+        # Hide spinner once we have valid duration
+        if getattr(self, "_is_buffering_spinner", False) and dur > 0:
+            if self.player.get_state_string() == "playing":
+                self._is_buffering_spinner = False
+                self.play_btn.set_sensitive(True)
+                self.play_btn_stack.set_visible_child_name("icon")
+                self.play_icon.set_from_icon_name("media-playback-pause-symbolic")
+
+    def on_scale_change_value(self, scale, scroll, value):
+        if self.player.duration > 0:
+            self.player.seek(value)
+        return False
+
     def _format_time(self, seconds):
+        if seconds < 0:
+            return "0:00"
         m = int(seconds // 60)
         s = int(seconds % 60)
         return f"{m}:{s:02d}"
 
-    def on_scale_change_value(self, scale, scroll, value):
-        self.player.seek(value)
-        return False
-
     def on_play_clicked(self, btn):
-        if self.player_state == "playing":
+        if self.player.get_state_string() == "playing":
             self.player.pause()
         else:
             self.player.play()
 
     def on_state_changed(self, player, state):
-        self.player_state = state
+        if state == "queue-updated":
+            self._sync_carousel_queue()
+            return
+
+        if state == "loading":
+            self.play_btn_stack.set_visible_child_name("spinner")
+            self.play_btn.set_sensitive(False)
+            self._is_buffering_spinner = True
+            return
+
+        if state == "playing" and self.player.duration <= 0:
+            # We are playing but buffering stream—keep spinner active until duration > 0
+            self.play_btn.set_sensitive(False)
+            self._is_buffering_spinner = True
+            return
+
+        self._is_buffering_spinner = False
+        self.play_btn_stack.set_visible_child_name("icon")
+        self.play_btn.set_sensitive(True)
         icon = (
             "media-playback-pause-symbolic"
             if state == "playing"
@@ -279,3 +459,49 @@ class ExpandedPlayer(Gtk.Box):
     def on_volume_changed(self, player, volume, muted):
         if abs(self.volume_scale.get_value() - volume) > 0.01:
             self.volume_scale.set_value(volume)
+
+    def _on_artist_btn_clicked(self, btn):
+        if self.on_artist_click:
+            self.on_artist_click()
+
+    def _on_cover_tapped(self, gesture, n_press, x, y):
+        if self.on_album_click:
+            self.on_album_click()
+
+    # --- ADW.CAROUSEL GESTURE HANDLERS ---
+
+    def _on_carousel_position_changed(self, carousel, param):
+        if getattr(self, "_ignore_page_change", False):
+            return
+
+        pos = carousel.get_position()
+        idx = int(round(pos))
+
+        # Dynamically load array ranges during scroll
+        if 0 <= idx < len(self.covers):
+            self._lazy_load_covers_around(idx)
+
+        # Only trigger when the carousel float position essentially reaches the target page
+        if abs(pos - idx) > 0.001:
+            return
+
+        active_page = carousel.get_nth_page(idx)
+
+        try:
+            new_idx = self.covers.index(active_page)
+        except ValueError:
+            return
+
+        if new_idx != self.player.current_queue_index:
+            print(f"DEBUG Carousel: Swiped directly to queue index {new_idx}")
+            self._ignore_page_change = True
+
+            if 0 <= new_idx < len(self.player.queue):
+
+                def _do_jump(jump_idx):
+                    self.player.current_queue_index = jump_idx
+                    self.player._play_current_index()
+                    self.player.emit("state-changed", "queue-updated")
+                    return False
+
+                GLib.idle_add(_do_jump, new_idx)

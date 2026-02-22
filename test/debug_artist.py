@@ -23,6 +23,7 @@ def test_artist(channel_id):
     
     try:
         data = client.get_artist(channel_id)
+        print(data)
         if data:
             print("\n[SUCCESS] Successfully fetched artist data.")
             print(f"Artist Name:    {data.get('name', 'N/A')}")
@@ -30,8 +31,7 @@ def test_artist(channel_id):
             
             description = data.get('description', '')
             if description:
-                desc_preview = description.replace('\n', ' ')[:80] + "..."
-                print(f"Description:    {desc_preview}")
+                print(f"Description:    {description}")
             else:
                 print(f"Description:    (Empty)")
 

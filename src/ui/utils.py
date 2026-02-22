@@ -1,8 +1,34 @@
 import threading
 import urllib.request
-from gi.repository import Gtk, Gdk, GdkPixbuf, GObject, GLib
+from collections import OrderedDict
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
-IMG_CACHE = {}
+# Bounded LRU Cache to prevent memory leaks (max 100 images)
+IMG_CACHE = OrderedDict()
+MAX_CACHE_SIZE = 100
+
+
+def cache_pixbuf(url, pixbuf):
+    if not url or not pixbuf:
+        return
+    if url in IMG_CACHE:
+        IMG_CACHE.move_to_end(url)
+        return
+
+    # Scale down very large images before caching to save massive amounts of RAM
+    # 800px is more than enough for any UI element in this app
+    w = pixbuf.get_width()
+    h = pixbuf.get_height()
+    max_dim = 800
+    if w > max_dim or h > max_dim:
+        scale = max_dim / max(w, h)
+        pixbuf = pixbuf.scale_simple(
+            int(w * scale), int(h * scale), GdkPixbuf.InterpType.BILINEAR
+        )
+
+    IMG_CACHE[url] = pixbuf
+    if len(IMG_CACHE) > MAX_CACHE_SIZE:
+        IMG_CACHE.popitem(last=False)
 
 
 class AsyncImage(Gtk.Image):
@@ -36,89 +62,91 @@ class AsyncImage(Gtk.Image):
 
     # ... (load_url, _fetch_image same) ...
 
-    def load_url(self, url):
+    def load_url(self, url, **kwargs):
         self.url = url
         if not url:
             self.set_from_icon_name("image-missing-symbolic")
             return
 
-        # Check Cache
-        if url in IMG_CACHE:
-            # Found in cache, use it immediately
-            pixbuf = IMG_CACHE[url]
-            self._apply_pixbuf(pixbuf)
-            return
+        cached_pixbuf = IMG_CACHE.get(url)
+        if cached_pixbuf:
+            IMG_CACHE.move_to_end(url)
 
-        thread = threading.Thread(target=self._fetch_image, args=(url,))
+        thread = threading.Thread(
+            target=self._fetch_image, args=(url, kwargs.get("fallbacks"), cached_pixbuf)
+        )
         thread.daemon = True
         thread.start()
 
-    def _fetch_image(self, url):
+    def _fetch_image(self, url, fallbacks=None, cached_pixbuf=None):
         try:
-            # Download image data
-            with urllib.request.urlopen(url) as response:
-                data = response.read()
+            pixbuf = cached_pixbuf
+            if not pixbuf:
+                # Download image data
+                with urllib.request.urlopen(url) as response:
+                    data = response.read()
 
-            loader = GdkPixbuf.PixbufLoader()
-            loader.write(data)
-            loader.close()
-            pixbuf = loader.get_pixbuf()
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(data)
+                loader.close()
+                pixbuf = loader.get_pixbuf()
 
             if pixbuf:
-                # Cache the original full-res pixbuf
-                IMG_CACHE[url] = pixbuf
+                # Cache the original full-res (scaled to max 800) pixbuf
+                cache_pixbuf(url, pixbuf)
 
-                # Apply (will scale if needed)
-                GLib.idle_add(self._apply_pixbuf, pixbuf)
+                # Now perform the widget-specific scaling and cropping in the background thread
+                tw = self.target_w
+                th = self.target_h
+
+                w = pixbuf.get_width()
+                h = pixbuf.get_height()
+
+                # Calculate scale to fill the target size (cover)
+                scale = max(tw / w, th / h)
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+
+                # Scale properly
+                scaled = pixbuf.scale_simple(
+                    new_w, new_h, GdkPixbuf.InterpType.BILINEAR
+                )
+
+                # Center crop to target dimensions
+                final_pixbuf = scaled
+                if new_w > tw or new_h > th:
+                    offset_x = max(0, (new_w - tw) // 2)
+                    offset_y = max(0, (new_h - th) // 2)
+                    cw = min(tw, new_w - offset_x)
+                    ch = min(th, new_h - offset_y)
+                    if cw > 0 and ch > 0:
+                        try:
+                            final_pixbuf = scaled.new_subpixbuf(
+                                offset_x, offset_y, cw, ch
+                            )
+                        except Exception as e:
+                            print(f"Pixbuf crop error: {e}")
+
+                # Apply on main thread
+                GLib.idle_add(self._apply_pixbuf, final_pixbuf, url)
 
         except Exception as e:
             print(f"Failed to load image {url}: {e}")
+            if fallbacks and self.url == url:
+                next_url = fallbacks.pop(0)
+                self.url = next_url  # Update current URL to match the fallback
+                print(f"Trying fallback: {next_url}")
+                self._fetch_image(next_url, fallbacks)
 
-    def _apply_pixbuf(self, pixbuf):
-        w = pixbuf.get_width()
-        h = pixbuf.get_height()
-
-        tw = self.target_w
-        th = self.target_h
-
-        # Calculate scale to fill the target size (cover)
-        scale = max(tw / w, th / h)
-        new_w = int(w * scale)
-        new_h = int(h * scale)
-
-        # Scale properly
-        scaled = pixbuf.scale_simple(new_w, new_h, GdkPixbuf.InterpType.BILINEAR)
-
-        # Verify valid scaling
-        if not scaled:
-            scaled = pixbuf
-
-        # Center crop to target dimensions
-        final_pixbuf = scaled
-        if new_w > tw or new_h > th:
-            offset_x = max(0, (new_w - tw) // 2)
-            offset_y = max(0, (new_h - th) // 2)
-
-            # Calculate width/height to crop
-            # Ensure we don't request more than available from offset
-            cw = min(tw, new_w - offset_x)
-            ch = min(th, new_h - offset_y)
-
-            # Sanity check prevents empty or negative dimensions
-            if cw > 0 and ch > 0:
-                try:
-                    final_pixbuf = subprocess_pixbuf(scaled, offset_x, offset_y, cw, ch)
-                except Exception as e:
-                    print(f"Pixbuf crop error: {e}")
-                    final_pixbuf = scaled
-            else:
-                final_pixbuf = scaled
+    def _apply_pixbuf(self, pixbuf, url=None):
+        # Race condition check: only apply if the URL hasn't changed since request
+        if url and self.url != url:
+            return
 
         if self.circular:
-            # Use CSS for circular styling.
             self.add_css_class("circular")
 
-        self.set_from_pixbuf(final_pixbuf)
+        self.set_from_pixbuf(pixbuf)
 
 
 def subprocess_pixbuf(pixbuf, x, y, w, h):
@@ -136,50 +164,70 @@ class AsyncPicture(Gtk.Picture):
         if url:
             self.load_url(url)
 
-    def load_url(self, url):
+    def load_url(self, url, **kwargs):
         self.url = url
         if not url:
             self.set_paintable(None)
             return
 
-        if url in IMG_CACHE:
-            self._apply_pixbuf(IMG_CACHE[url])
-            return
+        cached_pixbuf = IMG_CACHE.get(url)
+        if cached_pixbuf:
+            IMG_CACHE.move_to_end(url)
 
-        thread = threading.Thread(target=self._fetch_image, args=(url,))
+        thread = threading.Thread(
+            target=self._fetch_image, args=(url, kwargs.get("fallbacks"), cached_pixbuf)
+        )
         thread.daemon = True
         thread.start()
 
-    def _fetch_image(self, url):
+    def _fetch_image(self, url, fallbacks=None, cached_pixbuf=None):
         try:
-            with urllib.request.urlopen(url) as response:
-                data = response.read()
+            pixbuf = cached_pixbuf
+            if not pixbuf:
+                with urllib.request.urlopen(url) as response:
+                    data = response.read()
 
-            loader = GdkPixbuf.PixbufLoader()
-            loader.write(data)
-            loader.close()
-            pixbuf = loader.get_pixbuf()
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(data)
+                loader.close()
+                pixbuf = loader.get_pixbuf()
 
             if pixbuf:
-                IMG_CACHE[url] = pixbuf
-                GLib.idle_add(self._apply_pixbuf, pixbuf)
+                # Force center-crop to a 1:1 square in the worker thread
+                if self.crop_to_square:
+                    w = pixbuf.get_width()
+                    h = pixbuf.get_height()
+                    if w != h:
+                        size = min(w, h)
+                        offset_x = (w - size) // 2
+                        offset_y = (h - size) // 2
+                        pixbuf = pixbuf.new_subpixbuf(offset_x, offset_y, size, size)
+
+                # Scale down if still too large
+                w = pixbuf.get_width()
+                h = pixbuf.get_height()
+                max_dim = 800
+                if w > max_dim or h > max_dim:
+                    scale = max_dim / max(w, h)
+                    pixbuf = pixbuf.scale_simple(
+                        int(w * scale), int(h * scale), GdkPixbuf.InterpType.BILINEAR
+                    )
+
+                cache_pixbuf(url, pixbuf)
+                GLib.idle_add(self._apply_pixbuf, pixbuf, url)
 
         except Exception as e:
             print(f"AsyncPicture error {url}: {e}")
+            if fallbacks and self.url == url:
+                next_url = fallbacks.pop(0)
+                self.url = next_url
+                print(f"Trying fallback: {next_url}")
+                self._fetch_image(next_url, fallbacks)
 
-    def _apply_pixbuf(self, pixbuf):
-        # MAGIC HAPPENS HERE: Force center-crop to a 1:1 square
-        if self.crop_to_square:
-            w = pixbuf.get_width()
-            h = pixbuf.get_height()
-            if w != h:
-                # Find the smallest dimension
-                size = min(w, h)
-                # Calculate offsets to crop evenly from both sides
-                offset_x = (w - size) // 2
-                offset_y = (h - size) // 2
-                # Create a perfectly square sub-image
-                pixbuf = pixbuf.new_subpixbuf(offset_x, offset_y, size, size)
+    def _apply_pixbuf(self, pixbuf, url=None):
+        # Race condition check
+        if url and self.url != url:
+            return
 
         # Convert to Texture and paint
         texture = Gdk.Texture.new_for_pixbuf(pixbuf)
@@ -206,13 +254,6 @@ class MarqueeLabel(Gtk.ScrolledWindow):
         # Only animate when actually visible on screen
         self.connect("map", self._start_marquee)
         self.connect("unmap", self._stop_marquee)
-
-    def set_label(self, text):
-        self.label.set_label(text)
-        # Reset position and animation state when text changes
-        self.get_hadjustment().set_value(0)
-        self._current_pause = self._pause_frames
-        self._direction = 1
 
     def add_css_class(self, class_name):
         # Apply CSS to the actual text label, not the scrolled window container
@@ -242,8 +283,19 @@ class MarqueeLabel(Gtk.ScrolledWindow):
             self._current_pause -= 1
             return True
 
-        # Move the text by 1 pixel per frame
-        new_val = adj.get_value() + (1.0 * self._direction)
+        # Constant speed of ~50 pixels per second
+        # GTK frame clock provides frame time in microseconds
+        frame_time = frame_clock.get_frame_time()
+        if not hasattr(self, "_last_frame_time"):
+            self._last_frame_time = frame_time
+            return True
+
+        delta = (frame_time - self._last_frame_time) / 1_000_000.0  # seconds
+        self._last_frame_time = frame_time
+
+        # Move text by speed * delta
+        speed = 40.0  # px/s
+        new_val = adj.get_value() + (speed * delta * self._direction)
 
         # Reverse direction if we hit an edge
         if new_val >= max_val:
@@ -257,6 +309,15 @@ class MarqueeLabel(Gtk.ScrolledWindow):
 
         adj.set_value(new_val)
         return True
+
+    def set_label(self, text):
+        self.label.set_label(text)
+        # Reset position and animation state when text changes
+        self.get_hadjustment().set_value(0)
+        self._current_pause = self._pause_frames
+        self._direction = 1
+        if hasattr(self, "_last_frame_time"):
+            delattr(self, "_last_frame_time")
 
 
 class LikeButton(Gtk.Button):

@@ -1,14 +1,18 @@
 from gi.repository import Gtk, Adw, GObject, Gdk
 from ui.queue_panel import QueuePanel
 
+
 class PlayerBar(Gtk.Box):
     __gsignals__ = {"expand-requested": (GObject.SignalFlags.RUN_FIRST, None, ())}
 
-    def __init__(self, player, on_artist_click=None, on_queue_click=None):
+    def __init__(
+        self, player, on_artist_click=None, on_queue_click=None, on_album_click=None
+    ):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.player = player
         self.on_artist_click = on_artist_click
         self.on_queue_click = on_queue_click
+        self.on_album_click = on_album_click
         self.add_css_class("background")  # Generic background
         self.add_css_class("player-bar")  # Custom class for specific styling
 
@@ -35,9 +39,16 @@ class PlayerBar(Gtk.Box):
         # Cover Art
         from ui.utils import AsyncImage, LikeButton
 
+        self.cover_btn = Gtk.Button()
+        self.cover_btn.add_css_class("flat")
+        self.cover_btn.add_css_class("link-btn")
+        self.cover_btn.set_has_frame(False)
+        self.cover_btn.connect("clicked", self._on_cover_btn_clicked)
+
         self.cover_img = AsyncImage(size=48)
         self.cover_img.set_pixel_size(48)
-        content_box.append(self.cover_img)
+        self.cover_btn.set_child(self.cover_img)
+        content_box.append(self.cover_btn)
 
         # Metadata (Vertical)
         meta_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -67,12 +78,6 @@ class PlayerBar(Gtk.Box):
         meta_box.append(self.title_label)
         meta_box.append(self.artist_btn)
 
-        # Like Button (Repositioned to left)
-        self.like_btn = LikeButton(self.player.client, None)
-        self.like_btn.set_visible(False)
-        self.like_btn.set_margin_end(4)
-
-        content_box.append(self.like_btn)
         content_box.append(meta_box)
 
         # Controls
@@ -166,6 +171,12 @@ class PlayerBar(Gtk.Box):
 
         controls_box.append(self.queue_btn)
 
+        # Like Button (right side, always visible when track loaded)
+        self.like_btn = LikeButton(self.player.client, None)
+        self.like_btn.set_visible(False)
+        self.like_btn.set_valign(Gtk.Align.CENTER)
+        controls_box.append(self.like_btn)
+
         content_box.append(controls_box)
         self.content_box = content_box
         self.controls_box = controls_box
@@ -175,6 +186,9 @@ class PlayerBar(Gtk.Box):
         self.player.connect("progression", self.on_progression)
         self.player.connect("metadata-changed", self.on_metadata_changed)
         self.player.connect("volume-changed", self.on_volume_changed)
+
+        # Initial state sync
+        self.on_state_changed(self.player, self.player.get_state_string())
 
         # Gestures for Expansion (Connected to content_box for wider hit area)
         self.is_compact = False
@@ -192,6 +206,13 @@ class PlayerBar(Gtk.Box):
         click.connect("released", self.on_bar_tapped)
         self.content_box.add_controller(click)
 
+        # 3. Horizontal swipe for next/previous track
+        swipe = Gtk.GestureSwipe()
+        swipe.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+        swipe.connect("swipe", self._on_swipe)
+        self.content_box.add_controller(swipe)
+        self._skip_cooldown = False
+
     def set_queue_active(self, active):
         if self.queue_btn.get_active() != active:
             self.queue_btn.set_active(active)
@@ -204,9 +225,6 @@ class PlayerBar(Gtk.Box):
             self.next_btn.set_visible(False)
             self.volume_container.set_visible(False)
             self.queue_btn.set_visible(False)
-            self.like_btn.set_visible(
-                False
-            )  # Hide heart on mobile bar, reveal in expanded view instead
 
             self.content_box.set_spacing(6)
             self.controls_box.set_spacing(6)
@@ -229,8 +247,12 @@ class PlayerBar(Gtk.Box):
         if self.on_artist_click:
             self.on_artist_click()
 
+    def _on_cover_btn_clicked(self, btn):
+        if self.on_album_click:
+            self.on_album_click()
+
     def on_scale_change_value(self, scale, scroll, value):
-        if self.duration > 0:
+        if self.player.duration > 0:
             self.player.seek(value)
 
     def _load_css(self):
@@ -279,9 +301,6 @@ class PlayerBar(Gtk.Box):
                 display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
 
-    def on_play_clicked(self, btn):
-        self.player.play()
-
     def on_metadata_changed(
         self, player, title, artist, thumbnail_url, video_id, like_status
     ):
@@ -299,52 +318,38 @@ class PlayerBar(Gtk.Box):
         else:
             self.like_btn.set_visible(False)
 
-    def _show_spinner(self):
-        self._play_stack.set_visible_child_name("spinner")
-        self.play_btn.set_sensitive(False)
+    def on_play_clicked(self, btn):
+        if self.player.get_state_string() == "playing":
+            self.player.pause()
+        else:
+            self.player.play()
 
-    def _show_play_icon(self, icon_name):
-        pass  # Adw.Spinner animates automatically when visible
-        self._play_icon.set_from_icon_name(icon_name)
-        self._play_stack.set_visible_child_name("icon")
-        self.play_btn.set_sensitive(True)
-
-    def on_state_changed(self, player, text):
-        if text == "loading":
+    def on_state_changed(self, player, state):
+        if state == "loading":
             self.scale.set_value(0)
             self.scale.set_sensitive(False)
             self.timings_label.set_label("0:00 / 0:00")
-            self._show_spinner()
-
-        elif text == "playing":
-            self.scale.set_sensitive(True)
-            self._show_play_icon("media-playback-pause-symbolic")
-            try:
-                self.play_btn.disconnect_by_func(self.on_play_clicked)
-            except TypeError:
-                pass
-            try:
-                self.play_btn.disconnect_by_func(self.on_pause_clicked)
-            except TypeError:
-                pass
-            self.play_btn.connect("clicked", self.on_pause_clicked)
-
-        elif text == "paused" or text == "stopped":
-            if text == "paused":
+            self._play_stack.set_visible_child_name("spinner")
+            self.play_btn.set_sensitive(False)
+            self._is_buffering_spinner = True
+        elif state == "playing":
+            if self.player.duration <= 0:
+                self._is_buffering_spinner = True
+                self.play_btn.set_sensitive(False)
+                self.scale.set_sensitive(False)
+            else:
+                self._is_buffering_spinner = False
                 self.scale.set_sensitive(True)
-            self._show_play_icon("media-playback-start-symbolic")
-            try:
-                self.play_btn.disconnect_by_func(self.on_pause_clicked)
-            except TypeError:
-                pass
-            try:
-                self.play_btn.disconnect_by_func(self.on_play_clicked)
-            except TypeError:
-                pass
-            self.play_btn.connect("clicked", self.on_play_clicked)
-
-    def on_pause_clicked(self, btn):
-        self.player.pause()
+                self._play_icon.set_from_icon_name("media-playback-pause-symbolic")
+                self._play_stack.set_visible_child_name("icon")
+                self.play_btn.set_sensitive(True)
+        elif state in ("paused", "stopped"):
+            if state == "paused":
+                self.scale.set_sensitive(True)
+            self._play_icon.set_from_icon_name("media-playback-start-symbolic")
+            self._play_stack.set_visible_child_name("icon")
+            self.play_btn.set_sensitive(True)
+            self._is_buffering_spinner = False
 
     def _format_time(self, seconds):
         if seconds < 0:
@@ -359,9 +364,13 @@ class PlayerBar(Gtk.Box):
         t = f"{self._format_time(pos)} / {self._format_time(dur)}"
         self.timings_label.set_label(t)
 
-    def on_scale_change_value(self, scale, scroll, value):
-        self.player.seek(value)
-        return False
+        if getattr(self, "_is_buffering_spinner", False) and dur > 0:
+            if self.player.get_state_string() == "playing":
+                self._is_buffering_spinner = False
+                self.scale.set_sensitive(True)
+                self.play_btn.set_sensitive(True)
+                self._play_stack.set_visible_child_name("icon")
+                self._play_icon.set_from_icon_name("media-playback-pause-symbolic")
 
     def on_volume_btn_clicked(self, btn):
         is_muted = not self.player.get_mute()
@@ -386,6 +395,24 @@ class PlayerBar(Gtk.Box):
         else:
             self.volume_btn.set_icon_name("audio-volume-high-symbolic")
 
+    def _on_swipe(self, gesture, vx, vy):
+        if self._skip_cooldown:
+            return
+        if abs(vx) > abs(vy) and abs(vx) > 200:
+            self._skip_cooldown = True
+            if vx < 0:
+                self.player.next()
+            else:
+                self.player.previous()
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            from gi.repository import GLib
+
+            GLib.timeout_add(500, self._clear_skip_cooldown)
+
+    def _clear_skip_cooldown(self):
+        self._skip_cooldown = False
+        return False
+
     def on_drag_update(self, gesture, offset_x, offset_y):
         # Trigger expansion immediately on upward drag
         if self.is_compact and offset_y < -15:
@@ -393,7 +420,5 @@ class PlayerBar(Gtk.Box):
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
     def on_bar_tapped(self, gesture, n_press, x, y):
-        # Because we used a real GestureClick, GTK guarantees this will
-        # ONLY fire if you clicked the empty space, not the buttons!
         if self.is_compact:
             self.emit("expand-requested")

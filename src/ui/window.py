@@ -164,6 +164,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.player,
             on_artist_click=self.on_player_bar_artist_click,
             on_queue_click=self.toggle_queue,
+            on_album_click=self.on_player_bar_album_click,
         )
         self.player_bar.connect("expand-requested", self.on_expand_requested)
         self.root_content_view.add_bottom_bar(self.player_bar)
@@ -184,7 +185,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.bottom_sheet.set_content(self.root_content_view)
 
         # 3. Initialize your ExpandedPlayer (now as a standalone Box/Widget)
-        self.expanded_player = ExpandedPlayer(self.player)
+        self.expanded_player = ExpandedPlayer(
+            self.player,
+            on_artist_click=self.on_player_bar_artist_click,
+            on_album_click=self.on_player_bar_album_click,
+        )
         self.expanded_player.add_css_class("player-drawer")
 
         # Connect the dismiss signal to close the sheet
@@ -643,6 +648,61 @@ class MainWindow(Adw.ApplicationWindow):
                 # Open on main thread
                 artist_name = song_data["videoDetails"].get("author", "Artist")
                 GObject.idle_add(self.open_artist, channel_id, artist_name)
+
+    def on_player_bar_album_click(self):
+        print("Player Bar Album Clicked")
+        import threading
+
+        threading.Thread(target=self._resolve_album_from_player).start()
+
+    def _resolve_album_from_player(self):
+        vid = self.player.current_video_id
+        if not vid:
+            return
+
+        # First check if the current track object in queue has the album ID natively
+        track = None
+        if 0 <= self.player.current_queue_index < len(self.player.queue):
+            track = self.player.queue[self.player.current_queue_index]
+
+        album_id = None
+        album_name = "Album"
+
+        if track and "album" in track and track["album"]:
+            album = track["album"]
+            album_id = album.get("id")
+            album_name = album.get("name", album_name)
+
+        if not album_id:
+            # Fall back to fetching watch playlist to see if it belongs to an album
+            from api.client import MusicClient
+
+            client = MusicClient()
+            if client.api:
+                try:
+                    res = client.api.get_watch_playlist(videoId=vid)
+                    tracks = res.get("tracks", [])
+                    if tracks and "album" in tracks[0] and tracks[0]["album"]:
+                        album = tracks[0]["album"]
+                        album_id = album.get("id")
+                        album_name = album.get("name", "Album")
+                except Exception as e:
+                    print(f"Failed to resolve album: {e}")
+
+        if album_id:
+            # Check if it starts with 'MPREb'
+            if album_id.startswith("MPREb_"):
+                # Get album, then take the audioPlaylistId
+                from api.client import MusicClient
+
+                client = MusicClient()
+                playlist_id = client.api.get_album(album_id).get("audioPlaylistId")
+                GObject.idle_add(self.open_playlist, playlist_id, {"title": album_name})
+            else:
+                # It's an implied playlist ID or similar
+                GObject.idle_add(self.open_playlist, album_id, {"title": album_name})
+        else:
+            print("No album found for the current track.")
 
     def on_sidebar_row_selected(self, box, row):
         if row:

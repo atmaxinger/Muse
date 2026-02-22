@@ -63,6 +63,8 @@ class Player(GObject.Object):
         self.current_url = None
         self.last_seek_time = 0.0
         self.duration = -1
+        self._is_loading = False
+        self._current_logical_state = "stopped"
 
         # Timer for progress
         GObject.timeout_add(100, self.update_position)
@@ -298,8 +300,11 @@ class Player(GObject.Object):
         self, video_id, title, artist, thumbnail_url, like_status="INDIFFERENT"
     ):
         self.current_video_id = video_id
-        # Stop previous playback immediately
-        self.stop()
+
+        # Set loading FIRST, then stop pipeline — prevents a "stopped" flash
+        self._is_loading = True
+        self.player.set_state(Gst.State.NULL)
+        # Don't call _update_logical_state here — we'll emit once after metadata
 
         self.current_video_id = video_id
 
@@ -312,9 +317,6 @@ class Player(GObject.Object):
         current_gen = self.load_generation
 
         # Emit metadata immediately for UI responsiveness
-        print(
-            f"DEBUG: _load_internal emitting metadata (Gen {current_gen}). Thumb: {thumbnail_url}"
-        )
         self.emit(
             "metadata-changed",
             title,
@@ -323,7 +325,8 @@ class Player(GObject.Object):
             video_id,
             like_status,
         )
-        self.emit("state-changed", "loading")
+        # Now emit the loading state (only transition: whatever -> loading)
+        self._update_logical_state()
 
         # Run yt-dlp in a thread
         thread = threading.Thread(
@@ -424,42 +427,47 @@ class Player(GObject.Object):
 
         url = f"https://www.youtube.com/watch?v={video_id}"
 
+        # Use a local copy of options to prevent race conditions
+        opts = self.ydl_opts.copy()
         cookie_file = None
-
-        # Inject headers/cookies if authenticated
-        if self.client.is_authenticated() and self.client.api:
-            print(
-                f"DEBUG: Client is authenticated. Headers keys: {list(self.client.api.headers.keys())}"
-            )
-            # Create Netscape cookie file
-            cookie_file = self._create_cookie_file(self.client.api.headers)
-            if cookie_file:
-                print(f"DEBUG: Generated cookie file at {cookie_file}")
-                self.ydl_opts["cookiefile"] = cookie_file
-            else:
-                print("DEBUG: No cookie file generated (Cookie header missing?)")
-
-            # Still pass User-Agent and Authorization if available
-            http_headers = {}
-            if "User-Agent" in self.client.api.headers:
-                http_headers["User-Agent"] = self.client.api.headers["User-Agent"]
-            if "Authorization" in self.client.api.headers:
-                print("DEBUG: Passing Authorization header to yt-dlp")
-                http_headers["Authorization"] = self.client.api.headers["Authorization"]
-
-            if http_headers:
-                self.ydl_opts["http_headers"] = http_headers
-        else:
-            print("DEBUG: Client NOT authenticated")
-
         try:
-            with YoutubeDL(self.ydl_opts) as ydl:
+            # Inject headers/cookies if authenticated
+            if self.client.is_authenticated() and self.client.api:
+                print(
+                    f"DEBUG: Client is authenticated. Headers keys: {list(self.client.api.headers.keys())}"
+                )
+                # Create Netscape cookie file
+                cookie_file = self._create_cookie_file(self.client.api.headers)
+                if cookie_file:
+                    print(f"DEBUG: Generated cookie file at {cookie_file}")
+                    opts["cookiefile"] = cookie_file
+                else:
+                    print("DEBUG: No cookie file generated (Cookie header missing?)")
+
+                # Still pass User-Agent and Authorization if available
+                http_headers = {}
+                if "User-Agent" in self.client.api.headers:
+                    http_headers["User-Agent"] = self.client.api.headers["User-Agent"]
+                if "Authorization" in self.client.api.headers:
+                    print("DEBUG: Passing Authorization header to yt-dlp")
+                    http_headers["Authorization"] = self.client.api.headers[
+                        "Authorization"
+                    ]
+
+                if http_headers:
+                    opts["http_headers"] = http_headers
+            else:
+                print("DEBUG: Client NOT authenticated")
+
+            with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 stream_url = info["url"]
 
-                # Metadata Logic: Prefer hints if provided and not placeholders
+                # Extract only what we need, then drop the large info dict
                 fetched_title = info.get("title", "Unknown")
                 fetched_artist = info.get("uploader", "Unknown")
+                fetched_thumb = info.get("thumbnail")
+                del info  # Free 100KB+ of format/subtitle data
 
                 # If hints are placeholders, try to get better metadata from ytmusicapi
                 if (not title_hint or title_hint == "Loading...") or (
@@ -474,7 +482,7 @@ class Player(GObject.Object):
                             if "author" in v_details:
                                 fetched_artist = v_details["author"]
 
-                            # Use high-res thumbnail from get_song if available and we don't have a hint
+                            # Use high-res thumbnail from get_song if available
                             if (
                                 not thumb_hint
                                 and "thumbnail" in v_details
@@ -482,8 +490,7 @@ class Player(GObject.Object):
                             ):
                                 thumbs = v_details["thumbnail"]["thumbnails"]
                                 if thumbs:
-                                    # Get largest
-                                    info["thumbnail"] = thumbs[-1]["url"]
+                                    fetched_thumb = thumbs[-1]["url"]
 
                     except Exception as e:
                         print(f"Error fetching metadata from ytmusicapi: {e}")
@@ -501,12 +508,8 @@ class Player(GObject.Object):
 
                 print(f"Playing: {final_title} by {final_artist}")
 
-                # Check for thumbnails in info
-                final_thumb = thumb_hint
-                if not final_thumb and "thumbnail" in info:
-                    final_thumb = info["thumbnail"]
+                final_thumb = thumb_hint or fetched_thumb or ""
 
-                # Update GStreamer on main thread
                 # Check generation again before playing
                 if generation != self.load_generation:
                     print(
@@ -516,56 +519,100 @@ class Player(GObject.Object):
                         os.remove(cookie_file)
                     return
 
-                GObject.idle_add(self._start_playback, stream_url, cookie_file)
+                GObject.idle_add(self._start_playback, stream_url)
 
-                # Only emit if we actually fell back to fetched data, or just emit final ensuring consistency
-                # Emitting again is fine, as long as it's the *correct* data (the hint)
                 GObject.idle_add(
                     self.emit,
                     "metadata-changed",
                     final_title,
                     final_artist,
-                    final_thumb if final_thumb else "",
+                    final_thumb,
                     video_id,
                     like_status_hint,
                 )
         except Exception as e:
             print(f"Error fetching URL: {e}")
+        finally:
+            if cookie_file and os.path.exists(cookie_file):
+                try:
+                    os.remove(cookie_file)
+                    print(f"DEBUG: Cleaned up cookie file {cookie_file}")
+                except:
+                    pass
 
     def _start_playback(self, uri, cookie_file=None):
         self.player.set_state(Gst.State.NULL)
         self.player.set_property("uri", uri)
         self.player.set_state(Gst.State.PLAYING)
-        self.emit("state-changed", "playing")
 
         # Direct URLs typically work without explicit cookies. Stale URLs are handled in _load_internal.
         return False
 
     def play(self):
         self.player.set_state(Gst.State.PLAYING)
-        self.emit("state-changed", "playing")
+        self._update_logical_state()
 
     def pause(self):
         self.player.set_state(Gst.State.PAUSED)
-        self.emit("state-changed", "paused")
+        self._update_logical_state()
 
     def stop(self):
         self.player.set_state(Gst.State.NULL)
-        self.emit("state-changed", "stopped")
+        self._is_loading = False
+        # Force stopped state immediately
+        if self._current_logical_state != "stopped":
+            self._current_logical_state = "stopped"
+            self.emit("state-changed", "stopped")
+
+    def _update_logical_state(self):
+        """Evaluates internal flags and GStreamer state to emit a stable logical state.
+
+        We only track loading (waiting for yt-dlp) and GStreamer pipeline states.
+        GStreamer's playbin handles stream buffering internally — we don't need to
+        show a spinner for mid-stream buffer refills.
+        """
+        ret, gst_state, pending = self.player.get_state(0)
+
+        new_state = "stopped"
+
+        if self._is_loading:
+            new_state = "loading"
+        elif gst_state == Gst.State.PLAYING:
+            new_state = "playing"
+        elif gst_state == Gst.State.PAUSED:
+            # Only show paused if we're not loading (loading uses NULL->PAUSED->PLAYING)
+            if not self._is_loading:
+                new_state = "paused"
+
+        if new_state != self._current_logical_state:
+            self._current_logical_state = new_state
+            self.emit("state-changed", new_state)
 
     def on_message(self, bus, message):
         t = message.type
         if t == Gst.MessageType.EOS:
             print("EOS Reached. Advancing to next track.")
-            self.emit(
-                "state-changed", "stopped"
-            )  # Optional, next() will trigger loading
+            self.stop()
             GObject.idle_add(self.next)
         elif t == Gst.MessageType.ERROR:
             err, debug = message.parse_error()
             print(f"Error: {err}, {debug}")
             self.player.set_state(Gst.State.NULL)
-            self.emit("state-changed", "error")
+            self._is_loading = False
+            self._update_logical_state()
+        elif t == Gst.MessageType.STATE_CHANGED:
+            if message.src == self.player:
+                old, new, pending = message.parse_state_changed()
+                if new == Gst.State.PLAYING:
+                    self._is_loading = False
+                self._update_logical_state()
+        # BUFFERING messages are intentionally ignored — playbin manages
+        # stream buffering internally and briefly pauses the pipeline,
+        # which would cause the spinner to flash unnecessarily.
+
+    def get_state_string(self):
+        """Returns the current logical player state."""
+        return self._current_logical_state
 
     def update_position(self):
         # Prevent race condition with seek
