@@ -19,6 +19,10 @@ class WebkitLoginView(Adw.Bin):
         self.finished = False
 
         self.webview = WebKit.WebView()
+        settings = self.webview.get_settings()
+        settings.set_user_agent(
+            "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0"
+        )
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(self.webview)
