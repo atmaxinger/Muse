@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Gtk, Gdk, Adw, GObject, Gio
+from gi.repository import Gtk, Gdk, Adw, GObject, Gio, GLib
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -48,7 +48,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Content setup: ViewStack
         self.view_stack = Adw.ViewStack()
-        self.view_stack.connect("notify::visible-child", self.on_view_changed)
+        self.view_stack.connect("notify::visible-child-name", self.on_view_changed)
 
         # Toolbar View (Root) - Wraps EVERYTHING
         self.root_content_view = Adw.ToolbarView()
@@ -270,14 +270,19 @@ class MainWindow(Adw.ApplicationWindow):
             self.bottom_sheet.set_open(False)
 
     def on_view_changed(self, stack, param):
+        visible_name = self.view_stack.get_visible_child_name()
+
         # Update Back Button for the new active tab
         self.update_back_button_visibility()
 
-        # Close Search Bar when switching tabs (unless we switched TO search because of typing)
-        # Check if we are in search mode
+        # Auto-refresh library if selected
+        if visible_name == "library" and hasattr(self, "library_page"):
+            # Delay slightly to allow UI transition and background state settlement
+            GLib.timeout_add(100, self.library_page.load_library)
+
+        # Close Search Bar when switching tabs
         if self.search_bar.get_search_mode():
-            # Close search bar if we are leaving the search tab (e.g. clicking Home).
-            if self.view_stack.get_visible_child_name() != "search":
+            if visible_name != "search":
                 self.search_bar.set_search_mode(False)
 
     def on_playlist_header_title_changed(self, page, title):
@@ -295,6 +300,12 @@ class MainWindow(Adw.ApplicationWindow):
                 # Reset title when back at root
                 if hasattr(self, "title_widget"):
                     self.title_widget.set_title("Mixtapes")
+
+                # Refresh library if we just returned to root of library tab
+                if self.view_stack.get_visible_child_name() == "library" and hasattr(
+                    self, "library_page"
+                ):
+                    self.library_page.load_library()
         else:
             self.back_btn.set_visible(False)
 

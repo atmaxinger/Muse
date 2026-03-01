@@ -1,6 +1,5 @@
 import os
 import json
-import requests
 from ytmusicapi import YTMusic
 import ytmusicapi.navigation
 
@@ -65,6 +64,8 @@ class MusicClient:
         self.auth_path = os.path.join(os.getcwd(), "data", "headers_auth.json")
         self._is_authed = False
         self._playlist_cache = {}  # Cache fully-fetched playlists
+        self._user_info = None  # Cache for account info
+        self._subscribed_artists = set()  # Set of channel IDs
         self.try_login()
 
     def try_login(self):
@@ -282,6 +283,88 @@ class MusicClient:
             return []
         return self.api.get_library_playlists()
 
+    def get_library_subscriptions(self, limit=None):
+        if not self.is_authenticated():
+            return []
+        try:
+            subs = self.api.get_library_subscriptions(limit=limit)
+            if subs:
+                for s in subs:
+                    bid = s.get("browseId")
+                    if bid:
+                        self._subscribed_artists.add(bid)
+            return subs
+        except Exception as e:
+            print(f"Error fetching library subscriptions: {e}")
+            return []
+
+    def get_account_info(self):
+        """
+        Fetches the current user's account info. Caches the result.
+        """
+        if not self.is_authenticated():
+            return None
+        if self._user_info:
+            return self._user_info
+
+        try:
+            self._user_info = self.api.get_account_info()
+            return self._user_info
+        except Exception as e:
+            print(f"Error fetching account info: {e}")
+            return None
+
+    def is_own_playlist(self, playlist_metadata, playlist_id=None):
+        """
+        Determines if a playlist is owned/editable by the current user.
+        Excludes collaborative playlists where the user is only a collaborator.
+        """
+        if not self.is_authenticated():
+            return False
+
+        pid = (
+            playlist_id
+            or playlist_metadata.get("id")
+            or playlist_metadata.get("playlistId")
+            or ""
+        )
+
+        # 1. Liked Music and special system playlists are NOT owned
+        if pid in ["LM", "SE", "VLLM"]:
+            return False
+
+        # 2. Strict prefix check: must start with PL or VL
+        if not pid.startswith("PL") and not pid.startswith("VL"):
+            return False
+
+        author = playlist_metadata.get("author")
+
+        if not author and not playlist_metadata.get("collaborators"):
+            return True
+        elif playlist_metadata.get("collaborators"):
+            author = playlist_metadata.get("collaborators", {}).get("text", "")
+        else:
+            # Handle list or dict for author
+            if isinstance(author, list) and len(author) > 0:
+                author = author[0].get("name", "")
+            elif isinstance(author, dict):
+                author = author.get("name", "")
+            else:
+                author = str(author)
+
+        user_info = self.get_account_info()
+        user_name = user_info.get("accountName", "") if user_info else ""
+
+        # If it contains user's name and is collaborators, it is owned
+        if user_name and user_name in author and playlist_metadata.get("collaborators"):
+            return True
+
+        # If it matches the user's name, it is owned
+        if author == user_name:
+            return True
+
+        return False
+
     def get_playlist(self, playlist_id, limit=None):
         if not self.api:
             return None
@@ -406,6 +489,59 @@ class MusicClient:
         except Exception as e:
             print(f"Error editing playlist: {e}")
             return False
+
+    def delete_playlist(self, playlist_id):
+        if not self.is_authenticated():
+            return False
+        try:
+            self.api.delete_playlist(playlist_id)
+            return True
+        except Exception as e:
+            print(f"Error deleting playlist: {e}")
+            return False
+
+    def subscribe_artist(self, channel_id):
+        if not self.is_authenticated():
+            return False
+        try:
+            self.api.subscribe_artists([channel_id])
+            self._subscribed_artists.add(channel_id)
+            return True
+        except Exception as e:
+            print(f"Error subscribing to artist: {e}")
+            return False
+
+    def unsubscribe_artist(self, channel_id):
+        if not self.is_authenticated():
+            return False
+        try:
+            self.api.unsubscribe_artists([channel_id])
+            if channel_id in self._subscribed_artists:
+                self._subscribed_artists.remove(channel_id)
+            return True
+        except Exception as e:
+            print(f"Error unsubscribing from artist: {e}")
+            return False
+
+    def is_subscribed_artist(self, channel_id):
+        """Checks if an artist is in the local subscription cache."""
+        return channel_id in self._subscribed_artists
+
+    def create_playlist(
+        self, title, description="", privacy_status="PRIVATE", video_ids=None
+    ):
+        """
+        Creates a new playlist.
+        """
+        if not self.is_authenticated():
+            return None
+        try:
+            return self.api.create_playlist(
+                title, description, privacy_status=privacy_status, video_ids=video_ids
+            )
+        except Exception as e:
+            print(f"Error creating playlist: {e}")
+            return None
 
     def set_playlist_thumbnail(self, playlist_id, image_path):
         """

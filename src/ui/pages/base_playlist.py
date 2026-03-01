@@ -201,9 +201,6 @@ class BasePlaylistPage(Adw.Bin):
         self.spinner = Adw.Spinner()
         self.spinner.set_size_request(32, 32)
         loading_box.append(self.spinner)
-        loading_label = Gtk.Label(label="Loading Playlist...")
-        loading_label.add_css_class("title-2")
-        loading_box.append(loading_label)
 
         self.stack.add_named(loading_box, "loading")
         self.stack.add_named(self.main_box, "content")

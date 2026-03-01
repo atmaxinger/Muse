@@ -42,6 +42,7 @@ class PlaylistPage(Adw.Bin):
         self.playlist_id = None
         self.playlist_title_text = ""
         self.playlist_description_text = ""
+        self._is_previewing_cover = False
 
         # ── 1. Header UI Container ────────────────────────────────────────────
         self.header_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -147,6 +148,18 @@ class PlaylistPage(Adw.Bin):
         self.edit_btn.connect("clicked", self.on_edit_clicked)
         actions_box.append(self.edit_btn)
 
+        self.delete_btn = Gtk.Button()
+        self.delete_btn.set_icon_name("user-trash-symbolic")
+        self.delete_btn.add_css_class("circular")
+        self.delete_btn.add_css_class("destructive-action")
+        self.delete_btn.set_valign(Gtk.Align.CENTER)
+        self.delete_btn.set_halign(Gtk.Align.CENTER)
+        self.delete_btn.set_size_request(48, 48)
+        self.delete_btn.set_tooltip_text("Delete Playlist")
+        self.delete_btn.connect("clicked", self.on_delete_clicked)
+        self.delete_btn.set_visible(False)
+        actions_box.append(self.delete_btn)
+
         self.sort_dropdown = Gtk.DropDown.new_from_strings(
             ["Default", "Title (A-Z)", "Artist (A-Z)", "Album (A-Z)"]
         )
@@ -249,9 +262,6 @@ class PlaylistPage(Adw.Bin):
         self.spinner = Adw.Spinner()
         self.spinner.set_size_request(32, 32)
         loading_box.append(self.spinner)
-        loading_label = Gtk.Label(label="Loading Playlist...")
-        loading_label.add_css_class("title-2")
-        loading_box.append(loading_label)
 
         self.stack.add_named(loading_box, "loading")
         self.stack.add_named(self.main_box, "content")
@@ -484,6 +494,7 @@ class PlaylistPage(Adw.Bin):
             self.current_limit = 50
             self.emit("header-title-changed", "")
             self.current_tracks = []
+            self._is_previewing_cover = False
             self._clear_track_store()
 
         if initial_data:
@@ -584,6 +595,7 @@ class PlaylistPage(Adw.Bin):
                                 new_thumbs.append(nt)
                         if new_thumbs:
                             thumbnails = new_thumbs
+                is_owned = False
 
             elif playlist_id.startswith("MPRE"):
                 try:
@@ -630,6 +642,9 @@ class PlaylistPage(Adw.Bin):
                         for track in tracks:
                             if not track.get("thumbnails"):
                                 track["thumbnails"] = thumbnails
+                    is_owned = self.client.is_own_playlist(
+                        data, playlist_id=playlist_id
+                    )
                 except Exception as e:
                     print(f"Error fetching album details: {e}")
                     return
@@ -638,10 +653,32 @@ class PlaylistPage(Adw.Bin):
                     print(
                         f"Fetching playlist: {playlist_id} (Limit: {self.current_limit})"
                     )
-                    data = self.client.get_playlist(
-                        playlist_id, limit=self.current_limit
+
+                    # retry for brand new playlists (eventual consistency)
+                    data = None
+                    for attempt in range(3):
+                        try:
+                            data = self.client.get_playlist(
+                                playlist_id, limit=self.current_limit
+                            )
+                            if data and data.get("title"):
+                                break
+                        except Exception as e:
+                            print(f"Fetch attempt {attempt + 1} failed: {e}")
+
+                        if attempt < 2:
+                            import time
+
+                            time.sleep(1.5)
+
+                    if not data:
+                        raise Exception("Failed to fetch playlist after retries")
+
+                    title = (
+                        data.get("title")
+                        or self.playlist_title_text
+                        or "Unknown Playlist"
                     )
-                    title = data.get("title", "Unknown Playlist")
                     description = data.get("description", "")
                     tracks = data.get("tracks", [])
                     thumbnails = data.get("thumbnails", [])
@@ -656,6 +693,10 @@ class PlaylistPage(Adw.Bin):
 
                     meta_parts = []
                     privacy = data.get("privacy")
+                    is_owned = self.client.is_own_playlist(
+                        data, playlist_id=playlist_id
+                    )
+                    self.playlist_privacy_text = privacy or "PUBLIC"
                     if privacy:
                         meta_parts.append(privacy.capitalize())
                     year = data.get("year")
@@ -731,7 +772,11 @@ class PlaylistPage(Adw.Bin):
             if playlist_id.startswith("MPRE") or playlist_id.startswith("OLAK"):
                 meta1_parts.append(album_type)
             else:
-                privacy = data.get("privacy")
+                privacy = (
+                    self.playlist_privacy_text
+                    if hasattr(self, "playlist_privacy_text")
+                    else data.get("privacy")
+                )
                 meta1_parts.append(privacy.capitalize() if privacy else "Playlist")
             if year:
                 meta1_parts.append(str(year))
@@ -763,6 +808,7 @@ class PlaylistPage(Adw.Bin):
                 tracks,
                 is_incremental,
                 track_count,
+                is_owned,
             )
 
             if (
@@ -792,6 +838,7 @@ class PlaylistPage(Adw.Bin):
         tracks,
         append=False,
         total_tracks=None,
+        is_owned=False,
     ):
         self.stack.set_visible_child_name("content")
         self.content_spinner.set_visible(False)
@@ -800,7 +847,7 @@ class PlaylistPage(Adw.Bin):
         self.playlist_description_text = description
         self.playlist_name_label.set_label(title)
 
-        if description:
+        if description and description.strip():
             self.description_label.set_label(description)
             self.description_label.set_visible(True)
         else:
@@ -817,21 +864,20 @@ class PlaylistPage(Adw.Bin):
         self.empty_label.set_visible(not has_tracks)
         self.sort_row.set_visible(has_tracks and not is_album)
 
-        # Show edit button if it's an owned playlist
-        is_editable = (
-            self.client.is_authenticated() and not is_album and self.playlist_id != "LM"
-        )
-        # We can further check for 'privacy' in data to confirm ownership
-        # In ytmusicapi, 'privacy' is usually only returned for owned playlists, obviously.
+        # Show edit/delete buttons if it's an owned playlist
+        is_editable = self.client.is_authenticated() and not is_album and is_owned
         self.edit_btn.set_visible(is_editable)
+        self.delete_btn.set_visible(is_editable)
 
         if thumbnails and not append:
             url = thumbnails[-1]["url"]
             if self.cover_img.url != url:
+                self._is_previewing_cover = False
                 self.cover_img.load_url(url)
         elif not thumbnails and not self.cover_img.url:
-            self.cover_img.set_from_icon_name("media-playlist-audio-symbolic")
-            self.cover_img.url = None
+            if not self._is_previewing_cover:
+                self.cover_img.set_from_icon_name("media-playlist-audio-symbolic")
+                self.cover_img.url = None
 
         if append:
             start_index = len(self.current_tracks)
@@ -1120,6 +1166,49 @@ class PlaylistPage(Adw.Bin):
 
     # ── Edit Playlist ─────────────────────────────────────────────────────────
 
+    def on_delete_clicked(self, btn):
+        dialog = Adw.MessageDialog(
+            transient_for=self.get_root(),
+            heading="Delete Playlist?",
+            body=f'Are you sure you want to delete "{self.playlist_title_text}"?\nThis action cannot be undone.',
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def on_response(dg, response_id):
+            if response_id == "delete":
+                self._delete_playlist_confirmed()
+            dg.destroy()
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def _delete_playlist_confirmed(self):
+        GLib.idle_add(self.content_spinner.set_visible, True)
+        GLib.idle_add(self.stack.set_visible_child_name, "loading")
+
+        def thread_func():
+            success = self.client.delete_playlist(self.playlist_id)
+            if success:
+                print(f"Playlist {self.playlist_id} deleted successfully.")
+                # Refresh library through MainWindow
+
+                # Navigate back
+                nav = self.get_ancestor(Adw.NavigationView)
+                if nav:
+                    GLib.idle_add(nav.pop)
+            else:
+                print(f"Failed to delete playlist {self.playlist_id}")
+                GLib.idle_add(self.stack.set_visible_child_name, "content")
+                GLib.idle_add(self.content_spinner.set_visible, False)
+
+        import threading
+
+        threading.Thread(target=thread_func, daemon=True).start()
+
     def on_edit_clicked(self, btn):
         self._show_edit_dialog()
 
@@ -1155,13 +1244,25 @@ class PlaylistPage(Adw.Bin):
 
         # Title
         title_row = Adw.EntryRow(title="Title")
-        title_row.set_text(self.playlist_title_text)
+        title_row.set_text(self.playlist_title_text or "")
         group.add(title_row)
 
         # Description
         desc_row = Adw.EntryRow(title="Description")
-        desc_row.set_text(self.playlist_description_text)
+        desc_row.set_text(self.playlist_description_text or "")
         group.add(desc_row)
+
+        # Privacy
+        privacy_row = Adw.ComboRow(title="Visibility")
+        privacy_options = ["Public", "Private", "Unlisted"]
+        privacy_model = Gtk.StringList.new(privacy_options)
+        privacy_row.set_model(privacy_model)
+
+        # Map current privacy to index
+        current_privacy = getattr(self, "playlist_privacy_text", "PUBLIC").upper()
+        privacy_map = {"PUBLIC": 0, "PRIVATE": 1, "UNLISTED": 2}
+        privacy_row.set_selected(privacy_map.get(current_privacy, 0))
+        group.add(privacy_row)
 
         # Cover Art
         cover_row = Adw.ActionRow(title="Playlist Cover")
@@ -1228,16 +1329,20 @@ class PlaylistPage(Adw.Bin):
         def on_save_clicked(btn):
             new_title = title_row.get_text()
             new_desc = desc_row.get_text()
+            new_privacy_idx = privacy_row.get_selected()
+            privacy_api_values = ["PUBLIC", "PRIVATE", "UNLISTED"]
+            new_privacy = privacy_api_values[new_privacy_idx]
             img_path = getattr(self, "_selected_cover_path", None)
 
             # Store original values for the background job comparison
             old_title = self.playlist_title_text
             old_desc = self.playlist_description_text
+            old_privacy = getattr(self, "playlist_privacy_text", "PUBLIC").upper()
 
             # Optimistic UI Update
             self.playlist_name_label.set_label(new_title)
             self.playlist_title_text = new_title
-            if new_desc:
+            if new_desc and new_desc.strip():
                 self.description_label.set_label(new_desc)
                 self.description_label.set_visible(True)
             else:
@@ -1247,6 +1352,7 @@ class PlaylistPage(Adw.Bin):
 
             if img_path:
                 print(f"Optimistically showing local image: {img_path}")
+                self._is_previewing_cover = True
                 self.cover_img.set_from_file(Gio.File.new_for_path(img_path))
 
             def save_job():
@@ -1256,13 +1362,21 @@ class PlaylistPage(Adw.Bin):
                     clean_title = new_title.strip()
                     clean_desc = new_desc.strip()
 
+                    desc_to_compare = old_desc.strip() if old_desc else ""
+                    title_to_compare = old_title.strip() if old_title else ""
                     if (
-                        clean_title != old_title.strip()
-                        or clean_desc != old_desc.strip()
+                        clean_title != title_to_compare
+                        or clean_desc != desc_to_compare
+                        or new_privacy != old_privacy
                     ):
-                        print(f"DEBUG: Updating playlist metadata: '{clean_title}'")
+                        print(
+                            f"DEBUG: Updating playlist metadata: '{clean_title}' (Privacy: {new_privacy})"
+                        )
                         success = self.client.edit_playlist(
-                            self.playlist_id, title=clean_title, description=clean_desc
+                            self.playlist_id,
+                            title=clean_title,
+                            description=clean_desc or " ",
+                            privacy=new_privacy,
                         )
                         print(f"DEBUG: Metadata update success: {success}")
 
