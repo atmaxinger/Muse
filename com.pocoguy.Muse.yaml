@@ -9,6 +9,9 @@ command: muse
 
 # Allow network access during build for pip downloads
 build-options:
+  append-path: /usr/lib/sdk/node24/bin
+  env:
+    NODEJS_DIR: /usr/lib/sdk/node24
   build-args:
     - --share=network
 
