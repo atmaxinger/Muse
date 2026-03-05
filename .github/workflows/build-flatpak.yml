@@ -28,6 +28,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
           sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo mkdir -p /etc/polkit-1/rules.d
+          cat <<EOF | sudo tee /etc/polkit-1/rules.d/99-flatpak.rules
+          polkit.addRule(function(action, subject) {
+              if (action.id.indexOf("org.freedesktop.flatpak.") == 0 &&
+                  subject.isInGroup("sudo")) {
+                  return polkit.Result.YES;
+              }
+          });
+          EOF
 
       - name: Build using Flatpak Builder
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
