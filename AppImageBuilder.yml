@@ -37,18 +37,18 @@ AppDir:
 
   runtime:
     env:
-      PATH: "${APPDIR}/usr/bin:${PATH}"
+      PATH: "$$APPDIR/usr/bin:${PATH}"
       # PYTHONPATH will be set correctly by the launcher script
       # But we can provide a sensible default here for development/debugging
       # On Arch, it's typically python3.13 or similar
-      PYTHONHOME: "${APPDIR}/usr"
-      PYTHONPATH: "${APPDIR}/usr/share/muse:${APPDIR}/usr/lib/python3.12/site-packages:${APPDIR}/usr/lib/python3.13/site-packages:${APPDIR}/usr/lib/python3/dist-packages"
-      SSL_CERT_FILE: "${APPDIR}/etc/ssl/certs/ca-certificates.crt"
-      SSL_CERT_DIR: "${APPDIR}/etc/ssl/certs"
-      XDG_DATA_DIRS: "${APPDIR}/usr/share:${XDG_DATA_DIRS}"
+      PYTHONHOME: "$$APPDIR/usr"
+      PYTHONPATH: "$$APPDIR/usr/share/muse:$$APPDIR/usr/lib/python3.12/site-packages:$$APPDIR/usr/lib/python3.13/site-packages:$$APPDIR/usr/lib/python3/dist-packages"
+      SSL_CERT_FILE: "$$APPDIR/etc/ssl/certs/ca-certificates.crt"
+      SSL_CERT_DIR: "$$APPDIR/etc/ssl/certs"
+      XDG_DATA_DIRS: "$$APPDIR/usr/share:${XDG_DATA_DIRS}"
     path_mappings:
-      - /usr/libexec/glycin-loaders:${APPDIR}/usr/libexec/glycin-loaders
-      - /usr/share/nodejs:${APPDIR}/usr/share/nodejs
+      - /usr/libexec/glycin-loaders:$$APPDIR/usr/libexec/glycin-loaders
+      - /usr/share/nodejs:$$APPDIR/usr/share/nodejs
 
 AppImage:
   arch: x86_64
