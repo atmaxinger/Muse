@@ -97,7 +97,6 @@ This is a list of all the features that are planned for Mixtapes:
   - 🔜 App icon
 - 🔜 **GNOME Circle**: Maybe get Mixtapes on GNOME Circle?
   > Still considering it, might not happen.
-- ✅️ **AppImage**: Package Mixtapes as an AppImage.
 - ✅️ **AUR**: Package Mixtapes as an AUR package.
 
 If you got any more ideas or bug reports, feel free to open an issue.
@@ -118,7 +117,7 @@ Currently, there are 4 options for installing Mixtapes:
 - AUR
 - From Source
 - Using a Nix flake
-- GitHub Actions (Flatpak & AppImage)
+- GitHub Actions (Flatpak)
 - Using flatpak-builder
 
 ### AUR
@@ -180,10 +179,10 @@ See [here](https://github.com/m-obeid/Muse/pull/2#issue-3965386248)
 
 ### GitHub Actions (Pre-built Binaries)
 
-Automated builds for both Flatpak and AppImage are available for every change made to the repository. These support both `x86_64` (amd64) and `aarch64` architectures.
+Automated builds for Flatpak are available for every change made to the repository. These support both `x86_64` (amd64) and `aarch64` architectures.
 
 1. Go to the [Actions tab](https://github.com/m-obeid/Muse/actions) on GitHub.
-2. Select the latest successful build for either "Build Flatpak" or "Build AppImage".
+2. Select the latest successful build for "Build Flatpak".
 3. Scroll down to the **Artifacts** section and download the file for your architecture.
 
 **For Flatpak:**
@@ -200,14 +199,6 @@ _(Alternatively, you can download the offline bundle file:)_
 ```bash
 unzip Mixtapes-x86_64-flatpak.zip
 flatpak install --user ./Mixtapes-x86_64.flatpak
-```
-
-**For AppImage:**
-
-```bash
-unzip Mixtapes-x86_64-appimage.zip  # Extract if downloaded as a zip
-chmod +x *.AppImage
-./*.AppImage
 ```
 
 ### Flatpak
