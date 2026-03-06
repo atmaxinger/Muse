@@ -12,7 +12,7 @@ jobs:
     name: Build AppImage
     runs-on: ubuntu-latest
     container:
-      image: ${{ matrix.arch == 'aarch64' && 'arm64v8/archlinux:latest' || 'archlinux:latest' }}
+      image: ${{ matrix.arch == 'aarch64' && 'arm64v8/debian:sid' || 'debian:sid' }}
       options: --privileged
     strategy:
       matrix:
@@ -28,10 +28,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm python-pip python-gobject gtk4 libadwaita gobject-introspection-runtime base-devel libxml2 fuse2 wget
-          # appimage-builder dependencies
-          pacman -S --noconfirm file binutils patch
+          apt-get update
+          apt-get install -y python3-pip python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 libglib2.0-dev-bin libcairo2-dev python3-dev libfuse2 libgirepository1.0-dev libxml2-utils wget file binutils patch
 
       - name: Install appimage-builder
         run: |
@@ -43,17 +41,17 @@ jobs:
           cp -r src assets requirements.txt AppDir/usr/share/muse/
           cp com.pocoguy.Muse.desktop AppDir/usr/share/applications/
           cp assets/icons/hicolor/scalable/actions/compass2-symbolic.svg AppDir/usr/share/icons/hicolor/scalable/apps/com.pocoguy.Muse.svg
-          # glib-compile-resources might be in different package in Arch
-          pacman -S --noconfirm glib2
+
+          # Install glib-compile-resources
+          apt-get install -y libglib2.0-dev
           glib-compile-resources --sourcedir=. src/muse.gresource.xml --target=AppDir/usr/share/muse/src/muse.gresource
-          mkdir -p AppDir/usr/lib/python3.13/site-packages
-          # On Arch, python is 3.13+ likely
+
+          # Detect Python version in Sid
           PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
           SITE_PACKAGES="AppDir/usr/lib/python${PYTHON_VERSION}/site-packages"
           mkdir -p "$SITE_PACKAGES"
 
-          # Arch packages are up to date, we can likely just use requirements.txt
-          # But we still want to avoid bundling PyGObject if we use system python-gobject
+          # Exclude PyGObject and mprisify from bulk install to avoid compilation
           grep -vE "PyGObject|mprisify" requirements.txt > requirements-pure.txt
           pip3 install -r requirements-pure.txt --target="$SITE_PACKAGES" --no-cache-dir --break-system-packages
           pip3 install pydbus --target="$SITE_PACKAGES" --no-cache-dir --break-system-packages --no-deps
