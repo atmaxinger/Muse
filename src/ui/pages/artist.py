@@ -610,13 +610,11 @@ class ArtistPage(Adw.Bin):
         label.set_halign(Gtk.Align.START)
         box.append(label)
 
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        scrolled.set_propagate_natural_height(True)
-        # Add a subtle background to indicate scrollability if needed, or just standard
+        from ui.widgets.scroll_box import HorizontalScrollBox
+        scrolled = HorizontalScrollBox()
 
         inner_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-        scrolled.set_child(inner_box)
+        scrolled.set_content(inner_box)
         box.append(scrolled)
 
         limit = self._section_limits.get(title, 10)
@@ -718,42 +716,21 @@ class ArtistPage(Adw.Bin):
         limit = self._section_limits.get(title, 10)
         has_more_online = section_dict.get("params")
         if len(items) > limit or has_more_online:
-            load_more_cell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            load_more_cell.add_css_class("artist-horizontal-item")
-            load_more_cell.set_valign(Gtk.Align.START)
+            load_more_cell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            load_more_cell.set_valign(Gtk.Align.CENTER)
             load_more_cell.set_halign(Gtk.Align.CENTER)
-            load_more_cell.set_cursor(Gdk.Cursor.new_from_name("pointer", None))
+            load_more_cell.set_margin_start(16)
+            load_more_cell.set_margin_end(16)
 
-            # Use a specialized card for load more
-            more_card = Gtk.Box()
-            more_card.set_size_request(140, 140)
-            more_card.add_css_class("card")
-            more_card.set_halign(Gtk.Align.CENTER)
-            more_card.set_valign(Gtk.Align.CENTER)
+            more_btn = Gtk.Button(label="View All")
+            more_btn.add_css_class("pill")
+            more_btn.set_cursor(Gdk.Cursor.new_from_name("pointer", None))
 
-            more_icon = Gtk.Image.new_from_icon_name("go-next-symbolic")
-            more_icon.set_pixel_size(32)
-            more_card.append(more_icon)
-
-            load_more_cell.append(more_card)
-
-            more_lbl = Gtk.Label(label="View All")
-            more_lbl.add_css_class("heading")  # Smaller font
-            more_lbl.set_halign(Gtk.Align.START)
-            load_more_cell.append(more_lbl)
-
+            # Click handler for Load More using the button directly
+            more_btn.connect("clicked", lambda btn, t=title, sd=section_dict: self.on_load_more_clicked(btn, t, sd, None, btn))
+            
+            load_more_cell.append(more_btn)
             inner_box.append(load_more_cell)
-
-            # Click handler for Load More
-            more_click = Gtk.GestureClick()
-            more_click.connect("pressed", self._on_grid_item_pressed, load_more_cell)
-            more_click.connect(
-                "released",
-                lambda gesture, n_press, x, y: self.on_load_more_clicked_with_check(
-                    gesture, x, y, load_more_cell, title, section_dict
-                ),
-            )
-            load_more_cell.add_controller(more_click)
 
     def on_load_more_clicked(self, *args):
         # Extremely flexible signature to handle any signal (Button.clicked, Gesture.pressed, etc.)

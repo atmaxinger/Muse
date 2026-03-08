@@ -682,12 +682,71 @@ class MainWindow(Adw.ApplicationWindow):
         from ui.pages.discography import DiscographyPage
 
         disco_page = DiscographyPage(self.player, self.open_playlist)
+        disco_page.connect("header-title-changed", self.on_playlist_header_title_changed)
 
         nav_page = Adw.NavigationPage(child=disco_page, title=title)
 
         active_nav.push(nav_page)
 
         disco_page.load_discography(channel_id, title, browse_id, params, initial_items)
+
+    def open_mood(self, params, title):
+        if self.search_bar.get_search_mode():
+            self.search_bar.set_search_mode(False)
+
+        active_nav = self.view_stack.get_visible_child()
+        if not isinstance(active_nav, Adw.NavigationView):
+            print("Error: Active view is not a NavigationView")
+            return
+
+        from ui.pages.mood import MoodPage
+
+        mood_page = MoodPage(self.player, self.open_playlist)
+        mood_page.connect("header-title-changed", self.on_playlist_header_title_changed)
+
+        nav_page = Adw.NavigationPage(child=mood_page, title=title)
+        
+        active_nav.push(nav_page)
+
+        mood_page.load_mood(params, title)
+
+    def open_all_moods(self, items, title):
+        if self.search_bar.get_search_mode():
+            self.search_bar.set_search_mode(False)
+
+        active_nav = self.view_stack.get_visible_child()
+        if not isinstance(active_nav, Adw.NavigationView):
+            print("Error: Active view is not a NavigationView")
+            return
+
+        from ui.pages.all_moods import AllMoodsPage
+
+        all_moods_page = AllMoodsPage(items, title)
+        all_moods_page.connect("header-title-changed", self.on_playlist_header_title_changed)
+
+        display_title = f"All {title}"
+        if title == "Moods & Moments":
+            display_title = "All Moods & Moments"
+
+        nav_page = Adw.NavigationPage(child=all_moods_page, title=display_title)
+        active_nav.push(nav_page)
+
+    def open_category(self, params, title):
+        if self.search_bar.get_search_mode():
+            self.search_bar.set_search_mode(False)
+
+        active_nav = self.view_stack.get_visible_child()
+        if not isinstance(active_nav, Adw.NavigationView):
+            return
+
+        from ui.pages.category import CategoryPage
+        cat_page = CategoryPage(self.player, self.open_playlist)
+        cat_page.connect("header-title-changed", self.on_playlist_header_title_changed)
+
+        nav_page = Adw.NavigationPage(child=cat_page, title=title)
+        active_nav.push(nav_page)
+
+        cat_page.load_category(params, title)
 
     def on_player_bar_artist_click(self):
         pass

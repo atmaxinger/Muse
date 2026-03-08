@@ -436,6 +436,136 @@ class MusicClient:
             return {}
         return self.api.get_explore()
 
+    def get_mood_playlists(self, params):
+        if not self.api:
+            return []
+        try:
+            return self.api.get_mood_playlists(params=params)
+        except Exception as e:
+            print(f"Error fetching mood playlists: {e}")
+            return []
+
+    def get_mood_categories(self):
+        if not self.api:
+            return {}
+        try:
+            return self.api.get_mood_categories()
+        except Exception as e:
+            print(f"Error fetching mood categories: {e}")
+            return {}
+
+    def get_category_page(self, params):
+        if not self.api:
+            return []
+        try:
+            response = self.api._send_request("browse", {"browseId": "FEmusic_moods_and_genres_category", "params": params})
+            
+            sections = []
+            if 'contents' in response and 'singleColumnBrowseResultsRenderer' in response['contents']:
+                tabs = response['contents']['singleColumnBrowseResultsRenderer']['tabs']
+                results = tabs[0]['tabRenderer']['content']['sectionListRenderer']['contents']
+                
+                for section in results:
+                    if 'musicCarouselShelfRenderer' in section:
+                        carousel = section['musicCarouselShelfRenderer']
+                        title = carousel['header']['musicCarouselShelfBasicHeaderRenderer']['title']['runs'][0]['text']
+                        contents = carousel['contents']
+                        
+                        parsed_items = []
+                        for item in contents:
+                            try:
+                                data = {}
+                                if 'musicResponsiveListItemRenderer' in item:
+                                    renderer = item['musicResponsiveListItemRenderer']
+                                    runs = renderer['flexColumns'][0]['musicResponsiveListItemFlexColumnRenderer']['text']['runs']
+                                    data['title'] = runs[0]['text']
+                                    
+                                    if 'navigationEndpoint' in renderer:
+                                        ep = renderer['navigationEndpoint']
+                                        if 'watchEndpoint' in ep:
+                                            data['videoId'] = ep['watchEndpoint']['videoId']
+                                        elif 'browseEndpoint' in ep:
+                                            data['browseId'] = ep['browseEndpoint']['browseId']
+                                    elif 'navigationEndpoint' in runs[0]:
+                                        ep = runs[0]['navigationEndpoint']
+                                        if 'watchEndpoint' in ep:
+                                            data['videoId'] = ep['watchEndpoint']['videoId']
+                                        elif 'browseEndpoint' in ep:
+                                            data['browseId'] = ep['browseEndpoint']['browseId']
+                                            
+                                    if 'thumbnail' in renderer:
+                                        data['thumbnails'] = renderer['thumbnail']['musicThumbnailRenderer']['thumbnail']['thumbnails']
+                                        
+                                    if len(renderer['flexColumns']) > 1:
+                                        sub_runs = renderer['flexColumns'][1]['musicResponsiveListItemFlexColumnRenderer']['text']['runs']
+                                        artists = []
+                                        for r in sub_runs:
+                                            if 'navigationEndpoint' in r and 'browseEndpoint' in r['navigationEndpoint']:
+                                                if 'browseEndpointContextSupportedConfigs' in r['navigationEndpoint']['browseEndpoint']:
+                                                    if r['navigationEndpoint']['browseEndpoint']['browseEndpointContextSupportedConfigs']['browseEndpointContextMusicConfig']['pageType'] == 'MUSIC_PAGE_TYPE_ARTIST':
+                                                        artists.append({"name": r['text'], "id": r['navigationEndpoint']['browseEndpoint']['browseId']})
+                                        data['artists'] = artists
+                                    
+                                elif 'musicTwoRowItemRenderer' in item:
+                                    renderer = item['musicTwoRowItemRenderer']
+                                    runs = renderer['title']['runs']
+                                    data['title'] = runs[0]['text']
+                                    
+                                    if 'navigationEndpoint' in renderer:
+                                        ep = renderer['navigationEndpoint']
+                                        if 'watchEndpoint' in ep:
+                                            data['videoId'] = ep['watchEndpoint']['videoId']
+                                        elif 'browseEndpoint' in ep:
+                                            data['browseId'] = ep['browseEndpoint']['browseId']
+                                    elif 'navigationEndpoint' in runs[0]:
+                                        ep = runs[0]['navigationEndpoint']
+                                        if 'watchEndpoint' in ep:
+                                            data['videoId'] = ep['watchEndpoint']['videoId']
+                                        elif 'browseEndpoint' in ep:
+                                            data['browseId'] = ep['browseEndpoint']['browseId']
+                                            
+                                    if 'thumbnailRenderer' in renderer and 'musicThumbnailRenderer' in renderer['thumbnailRenderer']:
+                                        data['thumbnails'] = renderer['thumbnailRenderer']['musicThumbnailRenderer']['thumbnail']['thumbnails']
+                                        
+                                    if 'subtitle' in renderer and 'runs' in renderer['subtitle']:
+                                        sub_runs = renderer['subtitle']['runs']
+                                        artists = []
+                                        year = None
+                                        type_ = None
+                                        for r in sub_runs:
+                                            if 'navigationEndpoint' in r and 'browseEndpoint' in r['navigationEndpoint']:
+                                                ep = r['navigationEndpoint']['browseEndpoint']
+                                                if 'browseEndpointContextSupportedConfigs' in ep:
+                                                    pt = ep['browseEndpointContextSupportedConfigs']['browseEndpointContextMusicConfig']['pageType']
+                                                    if pt == 'MUSIC_PAGE_TYPE_ARTIST':
+                                                        artists.append({"name": r['text'], "id": ep['browseId']})
+                                            elif 'text' in r and r['text'].strip() != '•':
+                                                txt = r['text'].strip()
+                                                if txt.isdigit() and len(txt) == 4:
+                                                    year = txt
+                                                elif txt in ['Album', 'Single', 'EP', 'Playlist']:
+                                                    type_ = txt
+                                        data['artists'] = artists
+                                        if year:
+                                            data['year'] = year
+                                        if type_:
+                                            data['type'] = type_
+                                
+                                if data:
+                                    parsed_items.append(data)
+                            except Exception as e:
+                                print("Error parsing item in category page:", e)
+                                
+                        if parsed_items:
+                            sections.append({
+                                "title": title,
+                                "items": parsed_items
+                            })
+            return sections
+        except Exception as e:
+            print(f"Error fetching category page: {e}")
+            return []
+
     def get_album_browse_id(self, audio_playlist_id):
         if not self.api:
             return None

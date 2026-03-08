@@ -113,8 +113,10 @@ class SearchPage(Adw.Bin):
 
     def _fetch_explore(self):
         try:
-            # We can fetch both explore and charts if we want a super-home
             explore = self.client.get_explore()
+            categories = self.client.get_mood_categories()
+            if categories:
+                explore["separated_categories"] = categories
             GObject.idle_add(self.update_explore_ui, explore)
         except Exception as e:
             print(f"Error fetching explore data: {e}")
@@ -130,6 +132,28 @@ class SearchPage(Adw.Bin):
             self.explore_box.remove(child)
             child = next_child
 
+        # Separated categories (Moods and Genres)
+        if "separated_categories" in data:
+            cats = data["separated_categories"]
+            moods = cats.get("Moods & moments", [])
+            genres = cats.get("Genres", [])
+            
+            if moods:
+                self.add_horizontal_section(
+                    self.explore_box, "Moods & Moments", moods, is_category=True
+                )
+            
+            if genres:
+                for g in genres:
+                    g["is_genre"] = True
+                self.add_horizontal_section(
+                    self.explore_box, "Genres", genres, is_category=True
+                )
+        elif "moods_and_genres" in data and isinstance(data["moods_and_genres"], list):
+            self.add_horizontal_section(
+                self.explore_box, "Moods & Genres", data["moods_and_genres"], is_category=True
+            )
+
         # New Releases (Albums/Singles)
         if "new_releases" in data and isinstance(data["new_releases"], list):
             self.add_section(
@@ -142,57 +166,70 @@ class SearchPage(Adw.Bin):
                 self.explore_box, "New Music Videos", data["new_videos"][:5]
             )
 
-        # Moods & Genres
-        if "moods_and_genres" in data and isinstance(data["moods_and_genres"], list):
-            self.add_grid_section(
-                self.explore_box, "Moods & Genres", data["moods_and_genres"][:12]
-            )
-
         # Trending
         if "trending" in data and data["trending"] and "items" in data["trending"]:
             self.add_section(
                 self.explore_box, "Trending", data["trending"]["items"][:5]
             )
 
-    def add_grid_section(self, parent_box, title, items):
+    def add_horizontal_section(self, parent_box, title, items, is_category=False):
         if not items:
             return
+
+        section_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        parent_box.append(section_box)
 
         label = Gtk.Label(label=title)
         label.add_css_class("heading")
         label.set_halign(Gtk.Align.START)
-        parent_box.append(label)
+        section_box.append(label)
 
-        flow_box = Gtk.FlowBox()
-        flow_box.set_valign(Gtk.Align.START)
-        flow_box.set_max_children_per_line(30)  # Allow wrapping
-        flow_box.set_min_children_per_line(2)
-        flow_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        flow_box.set_column_spacing(12)
-        flow_box.set_row_spacing(12)
-        flow_box.set_homogeneous(True)  # Make buttons same size if possible
+        from ui.widgets.scroll_box import HorizontalScrollBox
+        scroll_box = HorizontalScrollBox()
 
-        for item in items:
+        h_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        h_box.set_margin_bottom(12)  # Space for scrollbar if it appears
+        
+        display_items = items
+        if is_category:
+            display_items = items[:20]
+
+        for item in display_items:
             btn_label = Gtk.Label(label=item.get("title", "Unknown"))
-            btn_label.set_ellipsize(Pango.EllipsizeMode.END)
-            btn_label.set_width_chars(1)
-            btn_label.set_max_width_chars(20)  # Reasonable max
+            # No truncation needed in a scrolled window
+            btn_label.set_hexpand(False)
 
             button = Gtk.Button()
             button.set_child(btn_label)
             button.item_data = item
             button.connect("clicked", self.on_grid_button_clicked)
-            flow_box.append(button)
+            button.add_css_class("pill") # Adwaita pill style for genres
+            h_box.append(button)
 
-        parent_box.append(flow_box)
+        if is_category and len(items) > 20:
+            view_all_btn = Gtk.Button(label="View All")
+            view_all_btn.add_css_class("pill")
+            view_all_btn.add_css_class("flat")
+            view_all_btn.connect("clicked", lambda b, i=items, t=title: self.on_view_all_clicked(i, t))
+            h_box.append(view_all_btn)
+
+        scroll_box.set_content(h_box)
+        section_box.append(scroll_box)
+
+    def on_view_all_clicked(self, items, title):
+        root = self.get_root()
+        if hasattr(root, "open_all_moods"):
+            root.open_all_moods(items, title)
+
 
     def on_grid_button_clicked(self, button):
         if hasattr(button, "item_data"):
             data = button.item_data
-            print(f"Clicked grid item: {data.get('title')}")
-            # Here we would navigate to a mood page using data['params']
             if "params" in data:
-                print(f"Open Mood params: {data['params']}")
+                root = self.get_root()
+                if hasattr(root, "open_category"):
+                    nav_title = data.get("title", "Category")
+                    root.open_category(data["params"], nav_title)
 
     def add_section(self, parent_box, title, items):
         if not items:

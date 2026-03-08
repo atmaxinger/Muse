@@ -31,7 +31,6 @@ This is a list of all the features that are planned for Mixtapes:
 ❎️ means the feature will likely not be implemented.
 
 - ✅️ **Authentication**: Connect to YouTube Music (Browser cookies).
-- 🔜 **Home Page**: View charts and explore new music.
 - ☑️ **Library**: Access your playlists and liked songs.
   - ✅️ Playlists
   - ✅️ Liked songs
@@ -39,6 +38,13 @@ This is a list of all the features that are planned for Mixtapes:
   - 🔜 Albums
   - 🔜 Uploads
 - ✅️ **Search**: Search for songs, albums, and artists.
+- ☑️ **Exploration**: Ways to discover new music.
+  - ✅️ New Releases
+  - ✅️ Moods & Moments
+  - ✅️ Genres
+  - ✅️ Trending
+  - 🔜 Charts
+  - 🔜 Home Page
 - ☑️ **Artist Page**: View artist details and discography.
   - ✅️ Basic artist info.
   - 🔜 Artist related artists.
@@ -83,12 +89,12 @@ This is a list of all the features that are planned for Mixtapes:
 - 🔜 **Discord RPC**: Show your current track on Discord.
 - 🔜 **Lyrics**: View synchronized lyrics, maybe even using BetterLyrics API.
 - ☑️ **Settings**: Configure app preferences (theme, audio quality, etc.).
-  > Currently, it only has an option to sign out.
+  > There isn't much to configure yet.
 - 🔜 **Download Support**: Download tracks for offline playback, even as local files.
 - 🔜 **Radio / Mixes**: Start a radio station from a song or artist.
 - 🔜 **Windows/macOS**: Builds for macOS and Windows
   > Requires quite a bit of tinkering, not my highest priority
-- 🔜 **Dedicated Data Directory**: Move all the data like cookies, cache, etc. to a dedicated directory instead of the project root directory.
+- ✅️ **Dedicated Data Directory**: Move all the data like cookies, cache, etc. to a dedicated directory instead of the project root directory.
 - 🔜 **Background Playback**: Play music in the background, even when the main window is closed.
 - ☑️ **Flatpak**: Package Mixtapes as a Flatpak.
   - ✅️ Flatpak build
